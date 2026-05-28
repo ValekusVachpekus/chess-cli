@@ -1,5 +1,10 @@
 #include <iostream>
 #include <vector>
+#include <memory>
+#include <sstream>
+#include <cctype>
+#include "chess_engine.h"
+#include "stockfish_adapter.h"
 
 using namespace std;
 
@@ -102,6 +107,8 @@ string figureToString(const IFigure *figure) {
     }
     return symbol;
 }
+
+#include "fen_converter.h"
 
 class Figure;
 
@@ -245,6 +252,93 @@ class Board : public IBoard {
         figures[fromX][fromY] = figure;
         figures[toX][toY] = captured;
         figure->setCoordinates(from);
+    }
+
+    string toFEN(bool castling_white_kingside, bool castling_white_queenside,
+                 bool castling_black_kingside, bool castling_black_queenside,
+                 char active_color, int halfmove_clock, int fullmove_number) {
+        stringstream fen;
+
+        // Piece placement (from rank 8 down to rank 1)
+        for (int y = 7; y >= 0; y--) {
+            int empty_count = 0;
+            for (int x = 0; x < 8; x++) {
+                IFigure *fig = figures[x][y];
+                if (fig == nullptr) {
+                    empty_count++;
+                } else {
+                    if (empty_count > 0) {
+                        fen << empty_count;
+                        empty_count = 0;
+                    }
+
+                    char piece_char = ' ';
+                    Type type = fig->getType();
+                    switch (type) {
+                    case PAWN:
+                        piece_char = 'p';
+                        break;
+                    case HORSE:
+                        piece_char = 'n';
+                        break;
+                    case ELEPHANT:
+                        piece_char = 'b';
+                        break;
+                    case LADYA:
+                        piece_char = 'r';
+                        break;
+                    case QUEEN:
+                        piece_char = 'q';
+                        break;
+                    case KING:
+                        piece_char = 'k';
+                        break;
+                    }
+
+                    if (fig->getColor() == WHITE) {
+                        piece_char = toupper(piece_char);
+                    }
+                    fen << piece_char;
+                }
+            }
+            if (empty_count > 0) {
+                fen << empty_count;
+            }
+            if (y > 0) {
+                fen << '/';
+            }
+        }
+
+        // Active color
+        fen << ' ' << active_color;
+
+        // Castling rights
+        fen << ' ';
+        bool has_castling = castling_white_kingside || castling_white_queenside ||
+                           castling_black_kingside || castling_black_queenside;
+        if (!has_castling) {
+            fen << '-';
+        } else {
+            if (castling_white_kingside)
+                fen << 'K';
+            if (castling_white_queenside)
+                fen << 'Q';
+            if (castling_black_kingside)
+                fen << 'k';
+            if (castling_black_queenside)
+                fen << 'q';
+        }
+
+        // En passant target square (not implemented, use -)
+        fen << " -";
+
+        // Halfmove clock
+        fen << ' ' << halfmove_clock;
+
+        // Fullmove number
+        fen << ' ' << fullmove_number;
+
+        return fen.str();
     }
 
     void display() {
@@ -760,7 +854,35 @@ class ChessFacade {
     IFigure *selected;
     bool gameOver = false;
     string lastMessage;
-    King *findKing(Color color) {
+    
+    // Engine support
+    unique_ptr<ChessEngine> engine;
+    bool botWhite = false;
+    bool botBlack = false;
+    Color currentTurn = WHITE;
+    int halfmoveClockCount = 0;
+    int fullmoveNumber = 1;
+    int moveTimeMs = 200;
+
+    Coordinates uciToCoordinates(const string &uci) {
+        if (uci.length() < 4) {
+            return Coordinates(-1, -1);
+        }
+        int from_x = uci[0] - 'a';
+        int from_y = uci[1] - '1';
+        return Coordinates(from_x, from_y);
+    }
+
+    Coordinates uciToMoveTarget(const string &uci) {
+        if (uci.length() < 4) {
+            return Coordinates(-1, -1);
+        }
+        int to_x = uci[2] - 'a';
+        int to_y = uci[3] - '1';
+        return Coordinates(to_x, to_y);
+    }
+
+    King *findKing(Color color) const {
         for (int x = 0; x < 8; x++) {
             for (int y = 0; y < 8; y++) {
                 IFigure *fig = gameboard->getFigure(Coordinates(x, y));
@@ -891,54 +1013,49 @@ class ChessFacade {
     }
 
     Coordinates stringToCoordinates(string cord) {
-        int x, y;
+        int x = -1, y = -1;
+        
+        if (cord.empty()) {
+            return Coordinates(-1, -1);
+        }
+        
         if (cord[0] == 'a' || cord[0] == 'A') {
             x = 0;
-        }
-        if (cord[0] == 'b' || cord[0] == 'B') {
+        } else if (cord[0] == 'b' || cord[0] == 'B') {
             x = 1;
-        }
-        if (cord[0] == 'c' || cord[0] == 'C') {
+        } else if (cord[0] == 'c' || cord[0] == 'C') {
             x = 2;
-        }
-        if (cord[0] == 'd' || cord[0] == 'D') {
+        } else if (cord[0] == 'd' || cord[0] == 'D') {
             x = 3;
-        }
-        if (cord[0] == 'e' || cord[0] == 'E') {
+        } else if (cord[0] == 'e' || cord[0] == 'E') {
             x = 4;
-        }
-        if (cord[0] == 'f' || cord[0] == 'F') {
+        } else if (cord[0] == 'f' || cord[0] == 'F') {
             x = 5;
-        }
-        if (cord[0] == 'g' || cord[0] == 'G') {
+        } else if (cord[0] == 'g' || cord[0] == 'G') {
             x = 6;
-        }
-        if (cord[0] == 'h' || cord[0] == 'H') {
+        } else if (cord[0] == 'h' || cord[0] == 'H') {
             x = 7;
+        }
+
+        if (cord.length() < 2) {
+            return Coordinates(-1, -1);
         }
 
         if (cord[1] == '1') {
             y = 0;
-        }
-        if (cord[1] == '2') {
+        } else if (cord[1] == '2') {
             y = 1;
-        }
-        if (cord[1] == '3') {
+        } else if (cord[1] == '3') {
             y = 2;
-        }
-        if (cord[1] == '4') {
+        } else if (cord[1] == '4') {
             y = 3;
-        }
-        if (cord[1] == '5') {
+        } else if (cord[1] == '5') {
             y = 4;
-        }
-        if (cord[1] == '6') {
+        } else if (cord[1] == '6') {
             y = 5;
-        }
-        if (cord[1] == '7') {
+        } else if (cord[1] == '7') {
             y = 6;
-        }
-        if (cord[1] == '8') {
+        } else if (cord[1] == '8') {
             y = 7;
         }
         return Coordinates(x, y);
@@ -1028,6 +1145,11 @@ class ChessFacade {
                 if (moved) {
                     reportCheck();
                     clearSelection();
+                    // Switch turn
+                    currentTurn = (currentTurn == WHITE) ? BLACK : WHITE;
+                    if (currentTurn == WHITE) {
+                        fullmoveNumber++;
+                    }
                 }
                 return moved;
             }
@@ -1037,6 +1159,116 @@ class ChessFacade {
 #endif
         return false;
     }
+
+    // Engine and bot support methods
+    void setEngine(unique_ptr<ChessEngine> engine_ptr) {
+        engine = move(engine_ptr);
+    }
+
+    void setBotColor(Color color, bool enabled) {
+        if (color == WHITE) {
+            botWhite = enabled;
+        } else {
+            botBlack = enabled;
+        }
+    }
+
+    bool isBotTurn() const {
+        if (currentTurn == WHITE) {
+            return botWhite;
+        } else {
+            return botBlack;
+        }
+    }
+
+    void setMoveTimeMs(int ms) { moveTimeMs = ms; }
+
+    string getFEN() const {
+        King *whiteKing = findKing(WHITE);
+        King *blackKing = findKing(BLACK);
+
+        bool wk = whiteKing != nullptr ? !whiteKing->getHasMoved() : false;
+        bool wq = false;
+
+        Ladya *whiteQueenRook =
+            dynamic_cast<Ladya *>(gameboard->getFigure(Coordinates(0, 0)));
+        if (whiteQueenRook != nullptr) {
+            wq = !whiteQueenRook->getHasMoved();
+        }
+
+        bool bk = blackKing != nullptr ? !blackKing->getHasMoved() : false;
+        bool bq = false;
+
+        Ladya *blackQueenRook =
+            dynamic_cast<Ladya *>(gameboard->getFigure(Coordinates(0, 7)));
+        if (blackQueenRook != nullptr) {
+            bq = !blackQueenRook->getHasMoved();
+        }
+
+        char active = (currentTurn == WHITE) ? 'w' : 'b';
+
+        return gameboard->toFEN(wk, wq, bk, bq, active, halfmoveClockCount,
+                                fullmoveNumber);
+    }
+
+    Color getCurrentTurn() const { return currentTurn; }
+
+    bool makeMoveByUCI(const string &uciMove) {
+        Coordinates from = uciToCoordinates(uciMove);
+        Coordinates to = uciToMoveTarget(uciMove);
+
+        if (!from.canMove() || !to.canMove()) {
+            return false;
+        }
+
+        IFigure *fig = gameboard->getFigure(from);
+        if (fig == nullptr || fig->getColor() != currentTurn) {
+            return false;
+        }
+
+        if (!selectFigure(currentTurn, from)) {
+            return false;
+        }
+
+        if (!moveFigure(to)) {
+            clearSelection();
+            return false;
+        }
+
+        // Turn already switched in moveFigure()
+        return true;
+    }
+
+    Coordinates getBotMove() {
+        if (!engine || !engine->isAvailable()) {
+            return Coordinates(-1, -1);
+        }
+
+        string fen = getFEN();
+        string uci_move = engine->getBestMove(fen, moveTimeMs);
+
+        if (uci_move.empty() || uci_move.length() < 4) {
+            return Coordinates(-1, -1);
+        }
+
+        // Return the target coordinates
+        return uciToMoveTarget(uci_move);
+    }
+
+    bool playBotMove() {
+        if (!isBotTurn() || !engine || !engine->isAvailable()) {
+            return false;
+        }
+
+        string fen = getFEN();
+        string uci_move = engine->getBestMove(fen, moveTimeMs);
+
+        if (uci_move.empty() || uci_move.length() < 4) {
+            return false;
+        }
+
+        return makeMoveByUCI(uci_move);
+    }
 };
 
 #ifndef CHESSGAME_NO_MAIN
@@ -1045,50 +1277,73 @@ int main() {
     ChessFacade chessGame = ChessFacade(gameboard);
     chessGame.fillBoard();
     gameboard->display();
-    bool whiteTurn = 1;
+
+    // Bot configuration
+    string bot_choice;
+    cout << "\nEnable bot play? (h=human vs human, w=human vs white bot, "
+            "b=human vs black bot, a=bot vs bot): ";
+    cin >> bot_choice;
+
+    if (bot_choice != "h") {
+        auto engine = make_unique<StockfishAdapter>();
+        if (engine->initialize()) {
+            chessGame.setEngine(move(engine));
+
+            if (bot_choice == "w" || bot_choice == "a") {
+                chessGame.setBotColor(WHITE, true);
+            }
+            if (bot_choice == "b" || bot_choice == "a") {
+                chessGame.setBotColor(BLACK, true);
+            }
+            cout << "Stockfish engine initialized. Movetime: 200ms" << endl;
+        } else {
+            cout << "Warning: Could not initialize Stockfish. Playing human vs human."
+                 << endl;
+        }
+    }
+
     string fig;
     while (true) {
-        if (whiteTurn) {
-            whiteTurn = false;
-            while (true) {
-                cout << "White chose figure to move: ";
-                cin >> fig;
-                Coordinates picked = chessGame.stringToCoordinates(fig);
-                if (chessGame.selectFigure(WHITE, picked)) {
-                    chessGame.showValidMoves(picked);
-                    break;
-                }
-                cout << "Invalid figure. Choose again." << endl;
+        Color turn = chessGame.getCurrentTurn();
+
+        // Check if it's a bot's turn
+        if (chessGame.isBotTurn()) {
+            string color_str = (turn == WHITE) ? "White" : "Black";
+            cout << color_str << " (bot) is thinking..." << endl;
+            if (!chessGame.playBotMove()) {
+                cout << "ERROR: Bot move failed!" << endl;
+                break;
             }
-            while (true) {
-                cout << "White move figure: ";
-                cin >> fig;
-                if (chessGame.moveFigure(chessGame.stringToCoordinates(fig))) {
-                    break;
-                }
-            }
+            cout << color_str << " bot made a move." << endl;
         } else {
-            whiteTurn = true;
+            // Human player's turn
+            string player_prompt = (turn == WHITE) ? "White chose figure to move: "
+                                                    : "Black chose figure to move: ";
             while (true) {
-                cout << "Black chose figure to move: ";
+                cout << player_prompt;
                 cin >> fig;
                 Coordinates picked = chessGame.stringToCoordinates(fig);
-                if (chessGame.selectFigure(BLACK, picked)) {
+                if (chessGame.selectFigure(turn, picked)) {
                     chessGame.showValidMoves(picked);
                     break;
                 }
                 cout << "Invalid figure. Choose again." << endl;
             }
+
+            string move_prompt = (turn == WHITE) ? "White move figure: "
+                                                  : "Black move figure: ";
             while (true) {
-                cout << "Black move figure: ";
+                cout << move_prompt;
                 cin >> fig;
                 if (chessGame.moveFigure(chessGame.stringToCoordinates(fig))) {
                     break;
                 }
             }
         }
+
         gameboard->display();
         if (chessGame.isGameOver()) {
+            cout << chessGame.getLastMessage() << endl;
             break;
         }
     }

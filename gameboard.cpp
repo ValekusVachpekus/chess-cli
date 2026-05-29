@@ -69,6 +69,28 @@ string typeToString(Type type) {
     return "";
 }
 
+typedef Type (*PromotionSelector)(Color);
+static PromotionSelector gPromotionSelector = nullptr;
+static bool gPromotionOverrideActive = false;
+static Type gPromotionOverride = QUEEN;
+
+void setPromotionSelector(PromotionSelector selector) {
+    gPromotionSelector = selector;
+}
+
+void setPromotionOverride(Type type) {
+    gPromotionOverride = type;
+    gPromotionOverrideActive = true;
+}
+
+Type consumePromotionOverride() {
+    if (!gPromotionOverrideActive) {
+        return QUEEN;
+    }
+    gPromotionOverrideActive = false;
+    return gPromotionOverride;
+}
+
 class IFigure;
 
 const string ANSI_RESET = "\033[0m";
@@ -418,7 +440,12 @@ class Pawn : public Figure {
     }
 
     Type typeSelector() {
-        // TODO: сделать селектор
+        if (gPromotionOverrideActive) {
+            return consumePromotionOverride();
+        }
+        if (gPromotionSelector != nullptr) {
+            return gPromotionSelector(this->getColor());
+        }
         return QUEEN;
     }
     void prevrashenie(Type type);
@@ -882,6 +909,21 @@ class ChessFacade {
         return Coordinates(to_x, to_y);
     }
 
+    Type promotionCharToType(char c) {
+        switch (tolower(static_cast<unsigned char>(c))) {
+        case 'q':
+            return QUEEN;
+        case 'r':
+            return LADYA;
+        case 'b':
+            return ELEPHANT;
+        case 'n':
+            return HORSE;
+        default:
+            return QUEEN;
+        }
+    }
+
     King *findKing(Color color) const {
         for (int x = 0; x < 8; x++) {
             for (int y = 0; y < 8; y++) {
@@ -1224,6 +1266,10 @@ class ChessFacade {
         IFigure *fig = gameboard->getFigure(from);
         if (fig == nullptr || fig->getColor() != currentTurn) {
             return false;
+        }
+
+        if (uciMove.length() >= 5) {
+            setPromotionOverride(promotionCharToType(uciMove[4]));
         }
 
         if (!selectFigure(currentTurn, from)) {

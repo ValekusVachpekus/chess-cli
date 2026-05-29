@@ -145,6 +145,47 @@ int promptMenu(int row, const string &title,
   }
 }
 
+Type promptPromotion(Color color) {
+  vector<Type> types = {QUEEN, LADYA, ELEPHANT, HORSE};
+  vector<string> options = {
+      string(typeToString(QUEEN)) + " Queen",
+      string(typeToString(LADYA)) + " Rook",
+      string(typeToString(ELEPHANT)) + " Bishop",
+      string(typeToString(HORSE)) + " Knight",
+  };
+  int current = 0;
+  while (true) {
+    clear();
+    string title =
+        (color == WHITE) ? "Promote pawn (WHITE):" : "Promote pawn (BLACK):";
+    mvprintw(2, 0, "%s", title.c_str());
+    for (size_t i = 0; i < options.size(); i++) {
+      if (static_cast<int>(i) == current) {
+        attron(A_REVERSE);
+      }
+      mvprintw(4 + static_cast<int>(i), 2, "%s", options[i].c_str());
+      if (static_cast<int>(i) == current) {
+        attroff(A_REVERSE);
+      }
+    }
+    mvprintw(9, 0, "Use ↑/↓ or j/k, Enter to select");
+    refresh();
+
+    int ch = getch();
+    if (ch == KEY_UP || ch == 'k') {
+      if (current > 0) {
+        current--;
+      }
+    } else if (ch == KEY_DOWN || ch == 'j') {
+      if (current < static_cast<int>(options.size()) - 1) {
+        current++;
+      }
+    } else if (ch == '\n' || ch == KEY_ENTER) {
+      return types[current];
+    }
+  }
+}
+
 int main() {
   setlocale(LC_ALL, "");
   initscr();
@@ -162,6 +203,7 @@ int main() {
   Board *gameboard = new Board();
   ChessFacade game(gameboard);
   game.fillBoard();
+  setPromotionSelector(promptPromotion);
 
   bool botEnabled = false;
   string botInfo = "Bot: OFF";

@@ -12,9 +12,20 @@ Compilation: `g++ tui.cpp -lncurses -o chess-tui`. \
 Using: `./chess-tui` \
 <img width="787" height="331" alt="изображение" src="https://github.com/user-attachments/assets/ce491dfd-ac9a-4fb4-a027-baff90dba63a" />
 
+## Stockfish usage 
+Game uses Stockfish via UCI.
+1. Install Stockfish: \
+`sudo pacman -S stockfish`\
+2. Usage\
+When game is launched there are 4 game modes: \
+ - h - human vs human
+ - w - bot plays white
+ - b - bot plays black 
+ - a - bot vs bot 
+Also you can chose movetime (default 200ms). More movetime makes bot smarter.
 
 ## TODO
- - [ ] Add Stockfish.
+ - [x] Add Stockfish.
  - [ ] Add 2 player game via 2 screens or localhost.
  - [ ] Add web GUI interface.
 

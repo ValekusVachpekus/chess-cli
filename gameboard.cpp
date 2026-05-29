@@ -213,6 +213,16 @@ class Board : public IBoard {
 
   public:
     Board() : figures(8, vector<Figure *>(8, nullptr)) {}
+    ~Board() override {
+        for (int x = 0; x < 8; x++) {
+            for (int y = 0; y < 8; y++) {
+                if (figures[x][y] != nullptr) {
+                    delete figures[x][y];
+                    figures[x][y] = nullptr;
+                }
+            }
+        }
+    }
 
     bool isEmpty(const Coordinates &coordinates) const override {
         if (coordinates.canMove()) {

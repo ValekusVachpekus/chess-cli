@@ -1438,6 +1438,7 @@ class ChessFacade {
         string uci_move = engine->getBestMove(fen, moveTimeMs);
 
         if (uci_move.empty() || uci_move.length() < 4) {
+            lastMessage = "ERROR: Bot move failed!";
             return false;
         }
 

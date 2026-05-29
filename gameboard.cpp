@@ -142,6 +142,8 @@ class IBoard {
                             const Coordinates &newc) = 0;
     virtual IFigure *getFigure(const Coordinates &coordinates) const = 0;
     virtual void setFigure(Figure *figure) = 0;
+    virtual Coordinates getEnPassantTarget() const = 0;
+    virtual void setEnPassantTarget(const Coordinates &coordinates) = 0;
 };
 
 class Figure : public IFigure {
@@ -210,6 +212,7 @@ class Figure : public IFigure {
 class Board : public IBoard {
   private:
     vector<vector<Figure *>> figures;
+    Coordinates enPassantTarget = Coordinates(-1, -1);
 
   public:
     Board() : figures(8, vector<Figure *>(8, nullptr)) {}
@@ -230,6 +233,12 @@ class Board : public IBoard {
         } else {
             return false;
         }
+    }
+    Coordinates getEnPassantTarget() const override {
+        return enPassantTarget;
+    }
+    void setEnPassantTarget(const Coordinates &coordinates) override {
+        enPassantTarget = coordinates;
     }
 
     void setFigure(Figure *figure) override {
@@ -255,6 +264,22 @@ class Board : public IBoard {
     }
 
     void moveFigure(const Coordinates &oldc, const Coordinates &newc) override {
+        Figure *moving = figures[oldc.getX()][oldc.getY()];
+        if (moving != nullptr && moving->getType() == PAWN &&
+            newc.equals(enPassantTarget) &&
+            figures[newc.getX()][newc.getY()] == nullptr) {
+            int dir = (moving->getColor() == WHITE) ? 1 : -1;
+            int capY = newc.getY() - dir;
+            if (capY >= 0 && capY <= 7) {
+                Figure *captured =
+                    figures[newc.getX()][capY];
+                if (captured != nullptr && captured->getType() == PAWN &&
+                    captured->getColor() != moving->getColor()) {
+                    delete captured;
+                    figures[newc.getX()][capY] = nullptr;
+                }
+            }
+        }
         if (figures[newc.getX()][newc.getY()] != nullptr) {
             delete figures[newc.getX()][newc.getY()];
         }
@@ -263,32 +288,54 @@ class Board : public IBoard {
     }
 
     void applyMove(Figure *figure, const Coordinates &to, Figure *&captured,
-                   Coordinates &from) {
+                   Coordinates &from, Coordinates &capturedPos) {
         from = figure->getCoordinates();
         int fromX = from.getX();
         int fromY = from.getY();
         int toX = to.getX();
         int toY = to.getY();
+        capturedPos = to;
         captured = figures[toX][toY];
+        if (figure->getType() == PAWN && to.equals(enPassantTarget) &&
+            captured == nullptr) {
+            int dir = (figure->getColor() == WHITE) ? 1 : -1;
+            int capY = toY - dir;
+            if (capY >= 0 && capY <= 7) {
+                capturedPos = Coordinates(toX, capY);
+                captured = figures[toX][capY];
+                figures[toX][capY] = nullptr;
+            }
+        }
         figures[toX][toY] = figure;
         figures[fromX][fromY] = nullptr;
         figure->setCoordinates(to);
     }
 
     void undoMove(Figure *figure, const Coordinates &to,
-                  const Coordinates &from, Figure *captured) {
+                  const Coordinates &from, Figure *captured,
+                  const Coordinates &capturedPos) {
         int fromX = from.getX();
         int fromY = from.getY();
         int toX = to.getX();
         int toY = to.getY();
         figures[fromX][fromY] = figure;
-        figures[toX][toY] = captured;
+        if (captured != nullptr) {
+            if (capturedPos.equals(to)) {
+                figures[toX][toY] = captured;
+            } else {
+                figures[capturedPos.getX()][capturedPos.getY()] = captured;
+                figures[toX][toY] = nullptr;
+            }
+        } else {
+            figures[toX][toY] = nullptr;
+        }
         figure->setCoordinates(from);
     }
 
     string toFEN(bool castling_white_kingside, bool castling_white_queenside,
                  bool castling_black_kingside, bool castling_black_queenside,
-                 char active_color, int halfmove_clock, int fullmove_number) {
+                 const Coordinates &en_passant_target, char active_color,
+                 int halfmove_clock, int fullmove_number) {
         stringstream fen;
 
         // Piece placement (from rank 8 down to rank 1)
@@ -361,8 +408,14 @@ class Board : public IBoard {
                 fen << 'q';
         }
 
-        // En passant target square (not implemented, use -)
-        fen << " -";
+        // En passant target square
+        if (en_passant_target.canMove()) {
+            char file = static_cast<char>('a' + en_passant_target.getX());
+            char rank = static_cast<char>('1' + en_passant_target.getY());
+            fen << ' ' << file << rank;
+        } else {
+            fen << " -";
+        }
 
         // Halfmove clock
         fen << ' ' << halfmove_clock;
@@ -433,6 +486,17 @@ class Pawn : public Figure {
         if (leftTarget != nullptr &&
             leftTarget->getColor() != this->getColor()) {
             validMoves.push_back(captureLeft);
+        }
+
+        Coordinates enPassant = this->gameboard->getEnPassantTarget();
+        if (enPassant.canMove() && enPassant.getY() == y + dir &&
+            abs(enPassant.getX() - x) == 1) {
+            IFigure *pawn =
+                this->gameboard->getFigure(Coordinates(enPassant.getX(), y));
+            if (pawn != nullptr && pawn->getType() == PAWN &&
+                pawn->getColor() != this->getColor()) {
+                validMoves.push_back(enPassant);
+            }
         }
 
         return validMoves;
@@ -769,9 +833,12 @@ class King : public Figure {
                 for (const auto &move : moves) {
                     Figure *captured = nullptr;
                     Coordinates from(0, 0);
-                    board->applyMove(concrete, move, captured, from);
+                    Coordinates capturedPos(0, 0);
+                    board->applyMove(concrete, move, captured, from,
+                                     capturedPos);
                     bool stillInCheck = this->isInCheck();
-                    board->undoMove(concrete, move, from, captured);
+                    board->undoMove(concrete, move, from, captured,
+                                    capturedPos);
                     if (!stillInCheck) {
                         return false;
                     }
@@ -990,9 +1057,10 @@ class ChessFacade {
             }
             Figure *captured = nullptr;
             Coordinates from(0, 0);
-            gameboard->applyMove(concrete, move, captured, from);
+            Coordinates capturedPos(0, 0);
+            gameboard->applyMove(concrete, move, captured, from, capturedPos);
             bool inCheck = king->isInCheck();
-            gameboard->undoMove(concrete, move, from, captured);
+            gameboard->undoMove(concrete, move, from, captured, capturedPos);
             if (!inCheck) {
                 legalMoves.push_back(move);
             }
@@ -1191,10 +1259,27 @@ class ChessFacade {
         if (selected == nullptr) {
             return false;
         }
+        Coordinates from = selected->getCoordinates();
+        Type movingType = selected->getType();
+        Color movingColor = selected->getColor();
         for (auto var : getLegalMovesForSelected()) {
             if (var.equals(coordinates)) {
                 bool moved = selected->move(coordinates);
                 if (moved) {
+                    if (movingType == PAWN) {
+                        int dy = coordinates.getY() - from.getY();
+                        int dir = (movingColor == WHITE) ? 1 : -1;
+                        if (dy == 2 * dir) {
+                            gameboard->setEnPassantTarget(
+                                Coordinates(from.getX(),
+                                            from.getY() + dir));
+                        } else {
+                            gameboard->setEnPassantTarget(
+                                Coordinates(-1, -1));
+                        }
+                    } else {
+                        gameboard->setEnPassantTarget(Coordinates(-1, -1));
+                    }
                     reportCheck();
                     clearSelection();
                     // Switch turn
@@ -1259,8 +1344,8 @@ class ChessFacade {
 
         char active = (currentTurn == WHITE) ? 'w' : 'b';
 
-        return gameboard->toFEN(wk, wq, bk, bq, active, halfmoveClockCount,
-                                fullmoveNumber);
+        return gameboard->toFEN(wk, wq, bk, bq, gameboard->getEnPassantTarget(),
+                                active, halfmoveClockCount, fullmoveNumber);
     }
 
     Color getCurrentTurn() const { return currentTurn; }

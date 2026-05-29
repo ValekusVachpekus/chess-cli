@@ -23,8 +23,8 @@ bool isMoveInList(const vector<Coordinates> &moves, int x, int y) {
 
 void drawBoard(ChessFacade &game, int cursorX, int cursorY,
                const vector<Coordinates> &validMoves, const string &status,
-               const string &botInfo, Color turn, bool flipped,
-               bool flipOnTurn, bool centerBoard, bool hideUI) {
+               const string &botInfo, Color turn, bool flipped, bool flipOnTurn,
+               bool centerBoard, bool hideUI) {
   clear();
   int rows = 0, cols = 0;
   getmaxyx(stdscr, rows, cols);
@@ -112,8 +112,7 @@ string promptInput(int row, const string &label, const string &defaultValue) {
   return input;
 }
 
-int promptMenu(int row, const string &title,
-               const vector<string> &options) {
+int promptMenu(int row, const string &title, const vector<string> &options) {
   int current = 0;
   while (true) {
     clear();
@@ -188,16 +187,15 @@ Type promptPromotion(Color color) {
 }
 
 void printHelp() {
-  cout
-      << "Usage: chess-tui [OPTIONS]\n\n"
-      << "Options:\n"
-      << "  -m, --mode <mode>    Game mode: human, white, black, auto\n"
-      << "  -t, --time <ms>      Bot movetime in milliseconds (default: 200)\n"
-      << "  -f, --flip           Flip board at start (black on bottom)\n"
-      << "  -c, --center         Center board in terminal\n"
-      << "  -H, --hide-ui        Hide UI text (show only board)\n"
-      << "  -h, --help           Show this help\n"
-      << "  -v, --version        Show version\n";
+  cout << "Usage: chess-tui [OPTIONS]\n\n"
+       << "Options:\n"
+       << "  -m, --mode <mode>    Game mode: human, white, black, auto\n"
+       << "  -t, --time <ms>      Bot movetime in milliseconds (default: 200)\n"
+       << "  -f, --flip           Flip board at start (black on bottom)\n"
+       << "  -c, --center         Center board in terminal\n"
+       << "  -H, --hide-ui        Hide UI text (show only board)\n"
+       << "  -h, --help           Show this help\n"
+       << "  -v, --version        Show version\n";
 }
 
 void printVersion() { cout << "chess-tui version 1.0.0\n"; }
@@ -381,15 +379,15 @@ int main(int argc, char **argv) {
 
   while (!game.isGameOver()) {
     Color turn = game.getCurrentTurn();
-    
+
     // Auto-play bot moves
     if (botEnabled && game.isBotTurn()) {
       status = "Bot is thinking...";
       drawBoard(game, cursorX, cursorY, {}, status, botInfo, turn, flipped,
                 flipOnTurn, centerBoard, hideUI);
       refresh();
-      usleep(100000);  // Brief display of thinking message
-      
+      usleep(100000); // Brief display of thinking message
+
       if (game.playBotMove()) {
         status = "Bot moved";
         if (flipOnTurn) {
@@ -398,6 +396,7 @@ int main(int argc, char **argv) {
       } else {
         status = "Bot move failed!";
       }
+      usleep(10000); // Avoid busy loop in bot-vs-bot
       continue;
     }
 

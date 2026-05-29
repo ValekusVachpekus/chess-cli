@@ -10,18 +10,22 @@ Using: `./gameboard`. \
 `tui.cpp` is a TUI version of game. Controls are arrows or VIM keys. It also can rotate board depending on player's side. \
 Compilation: `g++ tui.cpp -lncurses -o chess-tui`. \
 Using: `./chess-tui` \
+There are some features at TUI version:
+ - f - flip gameboard when turn
+ - c - center the gameboard
+ - h - hide interface
 <img width="787" height="331" alt="изображение" src="https://github.com/user-attachments/assets/ce491dfd-ac9a-4fb4-a027-baff90dba63a" />
 
 ## Stockfish usage 
 Game uses Stockfish via UCI.
-1. Install Stockfish: \
-`sudo pacman -S stockfish`\
-2. Usage\
-When game is launched there are 4 game modes: \
+1. Install Stockfish:
+`sudo pacman -S stockfish`
+2. Usage \
+When game is launched there are 4 game modes:
  - h - human vs human
  - w - bot plays white
  - b - bot plays black 
- - a - bot vs bot 
+ - a - bot vs bot \
 Also you can chose movetime (default 200ms). More movetime makes bot smarter.
 
 ## TODO

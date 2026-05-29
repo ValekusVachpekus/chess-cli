@@ -995,6 +995,10 @@ class ChessFacade {
     int halfmoveClockCount = 0;
     int fullmoveNumber = 1;
     int moveTimeMs = 200;
+    bool canCastleWK = true;
+    bool canCastleWQ = true;
+    bool canCastleBK = true;
+    bool canCastleBQ = true;
 
     Coordinates uciToCoordinates(const string &uci) {
         if (uci.length() < 4) {
@@ -1163,6 +1167,11 @@ class ChessFacade {
         // Kings
         gameboard->setFigure(new King(30, WHITE, gameboard, Coordinates(4, 0)));
         gameboard->setFigure(new King(31, BLACK, gameboard, Coordinates(4, 7)));
+
+        canCastleWK = true;
+        canCastleWQ = true;
+        canCastleBK = true;
+        canCastleBQ = true;
     }
 
     Coordinates stringToCoordinates(string cord) {
@@ -1295,6 +1304,11 @@ class ChessFacade {
         Coordinates from = selected->getCoordinates();
         Type movingType = selected->getType();
         Color movingColor = selected->getColor();
+        IFigure *targetBefore = gameboard->getFigure(coordinates);
+        bool capturedRook =
+            (targetBefore != nullptr && targetBefore->getType() == LADYA);
+        Color capturedColor =
+            (targetBefore != nullptr) ? targetBefore->getColor() : NONE;
         for (auto var : getLegalMovesForSelected()) {
             if (var.equals(coordinates)) {
                 bool moved = selected->move(coordinates);
@@ -1312,6 +1326,45 @@ class ChessFacade {
                         }
                     } else {
                         gameboard->setEnPassantTarget(Coordinates(-1, -1));
+                    }
+                    if (movingType == KING) {
+                        if (movingColor == WHITE) {
+                            canCastleWK = false;
+                            canCastleWQ = false;
+                        } else {
+                            canCastleBK = false;
+                            canCastleBQ = false;
+                        }
+                    } else if (movingType == LADYA) {
+                        if (movingColor == WHITE && from.getY() == 0) {
+                            if (from.getX() == 0) {
+                                canCastleWQ = false;
+                            } else if (from.getX() == 7) {
+                                canCastleWK = false;
+                            }
+                        } else if (movingColor == BLACK && from.getY() == 7) {
+                            if (from.getX() == 0) {
+                                canCastleBQ = false;
+                            } else if (from.getX() == 7) {
+                                canCastleBK = false;
+                            }
+                        }
+                    }
+                    if (capturedRook) {
+                        if (capturedColor == WHITE && coordinates.getY() == 0) {
+                            if (coordinates.getX() == 0) {
+                                canCastleWQ = false;
+                            } else if (coordinates.getX() == 7) {
+                                canCastleWK = false;
+                            }
+                        } else if (capturedColor == BLACK &&
+                                   coordinates.getY() == 7) {
+                            if (coordinates.getX() == 0) {
+                                canCastleBQ = false;
+                            } else if (coordinates.getX() == 7) {
+                                canCastleBK = false;
+                            }
+                        }
                     }
                     reportCheck();
                     clearSelection();
@@ -1354,30 +1407,10 @@ class ChessFacade {
     void setMoveTimeMs(int ms) { moveTimeMs = ms; }
 
     string getFEN() const {
-        King *whiteKing = findKing(WHITE);
-        King *blackKing = findKing(BLACK);
-
-        bool wk = whiteKing != nullptr ? !whiteKing->getHasMoved() : false;
-        bool wq = false;
-
-        Ladya *whiteQueenRook =
-            dynamic_cast<Ladya *>(gameboard->getFigure(Coordinates(0, 0)));
-        if (whiteQueenRook != nullptr) {
-            wq = !whiteQueenRook->getHasMoved();
-        }
-
-        bool bk = blackKing != nullptr ? !blackKing->getHasMoved() : false;
-        bool bq = false;
-
-        Ladya *blackQueenRook =
-            dynamic_cast<Ladya *>(gameboard->getFigure(Coordinates(0, 7)));
-        if (blackQueenRook != nullptr) {
-            bq = !blackQueenRook->getHasMoved();
-        }
-
         char active = (currentTurn == WHITE) ? 'w' : 'b';
 
-        return gameboard->toFEN(wk, wq, bk, bq, gameboard->getEnPassantTarget(),
+        return gameboard->toFEN(canCastleWK, canCastleWQ, canCastleBK,
+                                canCastleBQ, gameboard->getEnPassantTarget(),
                                 active, halfmoveClockCount, fullmoveNumber);
     }
 

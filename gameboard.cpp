@@ -290,8 +290,9 @@ class Board : public IBoard {
     void applyMove(Figure *figure, const Coordinates &to, Figure *&captured,
                    Coordinates &from, Coordinates &capturedPos,
                    Figure *&rookMoved, Coordinates &rookFrom,
-                   Coordinates &rookTo) {
+                   Coordinates &rookTo, Coordinates &prevEnPassantTarget) {
         from = figure->getCoordinates();
+        prevEnPassantTarget = enPassantTarget;
         int fromX = from.getX();
         int fromY = from.getY();
         int toX = to.getX();
@@ -332,7 +333,8 @@ class Board : public IBoard {
     void undoMove(Figure *figure, const Coordinates &to,
                   const Coordinates &from, Figure *captured,
                   const Coordinates &capturedPos, Figure *rookMoved,
-                  const Coordinates &rookFrom, const Coordinates &rookTo) {
+                  const Coordinates &rookFrom, const Coordinates &rookTo,
+                  const Coordinates &prevEnPassantTarget) {
         int fromX = from.getX();
         int fromY = from.getY();
         int toX = to.getX();
@@ -353,6 +355,7 @@ class Board : public IBoard {
             figures[rookTo.getX()][rookTo.getY()] = nullptr;
             rookMoved->setCoordinates(rookFrom);
         }
+        enPassantTarget = prevEnPassantTarget;
         figure->setCoordinates(from);
     }
 
@@ -862,11 +865,14 @@ class King : public Figure {
                     Figure *rookMoved = nullptr;
                     Coordinates rookFrom(0, 0);
                     Coordinates rookTo(0, 0);
+                    Coordinates prevEnPassantTarget(0, 0);
                     board->applyMove(concrete, move, captured, from,
-                                     capturedPos, rookMoved, rookFrom, rookTo);
+                                     capturedPos, rookMoved, rookFrom, rookTo,
+                                     prevEnPassantTarget);
                     bool stillInCheck = this->isInCheck();
                     board->undoMove(concrete, move, from, captured,
-                                    capturedPos, rookMoved, rookFrom, rookTo);
+                                    capturedPos, rookMoved, rookFrom, rookTo,
+                                    prevEnPassantTarget);
                     if (!stillInCheck) {
                         return false;
                     }
@@ -1093,11 +1099,14 @@ class ChessFacade {
             Figure *rookMoved = nullptr;
             Coordinates rookFrom(0, 0);
             Coordinates rookTo(0, 0);
+            Coordinates prevEnPassantTarget(0, 0);
             gameboard->applyMove(concrete, move, captured, from, capturedPos,
-                                 rookMoved, rookFrom, rookTo);
+                                 rookMoved, rookFrom, rookTo,
+                                 prevEnPassantTarget);
             bool inCheck = king->isInCheck();
             gameboard->undoMove(concrete, move, from, captured, capturedPos,
-                                rookMoved, rookFrom, rookTo);
+                                rookMoved, rookFrom, rookTo,
+                                prevEnPassantTarget);
             if (!inCheck) {
                 legalMoves.push_back(move);
             }

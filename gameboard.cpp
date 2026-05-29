@@ -288,7 +288,9 @@ class Board : public IBoard {
     }
 
     void applyMove(Figure *figure, const Coordinates &to, Figure *&captured,
-                   Coordinates &from, Coordinates &capturedPos) {
+                   Coordinates &from, Coordinates &capturedPos,
+                   Figure *&rookMoved, Coordinates &rookFrom,
+                   Coordinates &rookTo) {
         from = figure->getCoordinates();
         int fromX = from.getX();
         int fromY = from.getY();
@@ -296,6 +298,9 @@ class Board : public IBoard {
         int toY = to.getY();
         capturedPos = to;
         captured = figures[toX][toY];
+        rookMoved = nullptr;
+        rookFrom = Coordinates(-1, -1);
+        rookTo = Coordinates(-1, -1);
         if (figure->getType() == PAWN && to.equals(enPassantTarget) &&
             captured == nullptr) {
             int dir = (figure->getColor() == WHITE) ? 1 : -1;
@@ -306,6 +311,19 @@ class Board : public IBoard {
                 figures[toX][capY] = nullptr;
             }
         }
+        if (figure->getType() == KING && abs(toX - fromX) == 2) {
+            int rookStartX = (toX > fromX) ? 7 : 0;
+            int rookEndX = (toX > fromX) ? 5 : 3;
+            Figure *rook = figures[rookStartX][fromY];
+            if (rook != nullptr && rook->getType() == LADYA) {
+                rookMoved = rook;
+                rookFrom = Coordinates(rookStartX, fromY);
+                rookTo = Coordinates(rookEndX, fromY);
+                figures[rookEndX][fromY] = rook;
+                figures[rookStartX][fromY] = nullptr;
+                rook->setCoordinates(rookTo);
+            }
+        }
         figures[toX][toY] = figure;
         figures[fromX][fromY] = nullptr;
         figure->setCoordinates(to);
@@ -313,7 +331,8 @@ class Board : public IBoard {
 
     void undoMove(Figure *figure, const Coordinates &to,
                   const Coordinates &from, Figure *captured,
-                  const Coordinates &capturedPos) {
+                  const Coordinates &capturedPos, Figure *rookMoved,
+                  const Coordinates &rookFrom, const Coordinates &rookTo) {
         int fromX = from.getX();
         int fromY = from.getY();
         int toX = to.getX();
@@ -328,6 +347,11 @@ class Board : public IBoard {
             }
         } else {
             figures[toX][toY] = nullptr;
+        }
+        if (rookMoved != nullptr && rookFrom.canMove() && rookTo.canMove()) {
+            figures[rookFrom.getX()][rookFrom.getY()] = rookMoved;
+            figures[rookTo.getX()][rookTo.getY()] = nullptr;
+            rookMoved->setCoordinates(rookFrom);
         }
         figure->setCoordinates(from);
     }
@@ -835,11 +859,14 @@ class King : public Figure {
                     Figure *captured = nullptr;
                     Coordinates from(0, 0);
                     Coordinates capturedPos(0, 0);
+                    Figure *rookMoved = nullptr;
+                    Coordinates rookFrom(0, 0);
+                    Coordinates rookTo(0, 0);
                     board->applyMove(concrete, move, captured, from,
-                                     capturedPos);
+                                     capturedPos, rookMoved, rookFrom, rookTo);
                     bool stillInCheck = this->isInCheck();
                     board->undoMove(concrete, move, from, captured,
-                                    capturedPos);
+                                    capturedPos, rookMoved, rookFrom, rookTo);
                     if (!stillInCheck) {
                         return false;
                     }
@@ -1059,9 +1086,14 @@ class ChessFacade {
             Figure *captured = nullptr;
             Coordinates from(0, 0);
             Coordinates capturedPos(0, 0);
-            gameboard->applyMove(concrete, move, captured, from, capturedPos);
+            Figure *rookMoved = nullptr;
+            Coordinates rookFrom(0, 0);
+            Coordinates rookTo(0, 0);
+            gameboard->applyMove(concrete, move, captured, from, capturedPos,
+                                 rookMoved, rookFrom, rookTo);
             bool inCheck = king->isInCheck();
-            gameboard->undoMove(concrete, move, from, captured, capturedPos);
+            gameboard->undoMove(concrete, move, from, captured, capturedPos,
+                                rookMoved, rookFrom, rookTo);
             if (!inCheck) {
                 legalMoves.push_back(move);
             }

@@ -68,8 +68,8 @@ private:
                 return "";
             }
             if (bytes_read == 0) {
-                this_thread::sleep_for(chrono::milliseconds(10));
-                continue;
+                cerr << "Stockfish closed the connection (EOF)" << endl;
+                return "";
             }
 
             if (buffer[0] == '\r') {

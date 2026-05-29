@@ -2,6 +2,7 @@
 #define CHESSGAME_SILENT
 #include "gameboard.cpp"
 
+#include <getopt.h>
 #include <locale.h>
 #include <ncurses.h>
 #include <unistd.h>
@@ -186,7 +187,70 @@ Type promptPromotion(Color color) {
   }
 }
 
-int main() {
+void printHelp() {
+  cout
+      << "Usage: chess-tui [OPTIONS]\n\n"
+      << "Options:\n"
+      << "  -m, --mode <mode>    Game mode: human, white, black, auto\n"
+      << "  -t, --time <ms>      Bot movetime in milliseconds (default: 200)\n"
+      << "  -h, --help           Show this help\n"
+      << "  -v, --version        Show version\n";
+}
+
+void printVersion() { cout << "chess-tui version 1.0.0\n"; }
+
+int main(int argc, char **argv) {
+  string modeArg;
+  bool modeProvided = false;
+  bool timeProvided = false;
+  int moveTimeMs = 200;
+
+  static struct option long_options[] = {
+      {"mode", required_argument, nullptr, 'm'},
+      {"time", required_argument, nullptr, 't'},
+      {"help", no_argument, nullptr, 'h'},
+      {"version", no_argument, nullptr, 'v'},
+      {nullptr, 0, nullptr, 0}};
+
+  int opt;
+  int option_index = 0;
+  while ((opt = getopt_long(argc, argv, "m:t:hv", long_options,
+                            &option_index)) != -1) {
+    switch (opt) {
+    case 'm':
+      modeArg = optarg;
+      modeProvided = true;
+      if (modeArg != "human" && modeArg != "white" && modeArg != "black" &&
+          modeArg != "auto") {
+        cerr << "Error: invalid mode '" << modeArg
+             << "'. Use human, white, black, auto.\n";
+        return 1;
+      }
+      break;
+    case 't':
+      try {
+        moveTimeMs = stoi(optarg);
+      } catch (...) {
+        cerr << "Error: time must be a number of milliseconds.\n";
+        return 1;
+      }
+      if (moveTimeMs <= 0) {
+        cerr << "Error: time must be > 0.\n";
+        return 1;
+      }
+      timeProvided = true;
+      break;
+    case 'h':
+      printHelp();
+      return 0;
+    case 'v':
+      printVersion();
+      return 0;
+    default:
+      return 1;
+    }
+  }
+
   setlocale(LC_ALL, "");
   initscr();
   cbreak();
@@ -209,24 +273,35 @@ int main() {
   string botInfo = "Bot: OFF";
   string status = "";
 
-  vector<string> modeOptions = {
-      "Human vs Human",
-      "Bot plays White",
-      "Bot plays Black",
-      "Bot vs Bot",
-  };
-  int modeIndex = promptMenu(2, "Select game mode:", modeOptions);
   char mode = 'h';
-  if (modeIndex == 1) {
-    mode = 'w';
-  } else if (modeIndex == 2) {
-    mode = 'b';
-  } else if (modeIndex == 3) {
-    mode = 'a';
+  if (modeProvided) {
+    if (modeArg == "white") {
+      mode = 'w';
+    } else if (modeArg == "black") {
+      mode = 'b';
+    } else if (modeArg == "auto") {
+      mode = 'a';
+    } else {
+      mode = 'h';
+    }
+  } else {
+    vector<string> modeOptions = {
+        "Human vs Human",
+        "Bot plays White",
+        "Bot plays Black",
+        "Bot vs Bot",
+    };
+    int modeIndex = promptMenu(2, "Select game mode:", modeOptions);
+    if (modeIndex == 1) {
+      mode = 'w';
+    } else if (modeIndex == 2) {
+      mode = 'b';
+    } else if (modeIndex == 3) {
+      mode = 'a';
+    }
   }
 
-  int moveTimeMs = 200;
-  if (mode != 'h') {
+  if (!modeProvided && mode != 'h') {
     string mt = promptInput(11, "Bot movetime in ms [200]: ", "200");
     try {
       moveTimeMs = stoi(mt);
@@ -236,6 +311,9 @@ int main() {
     if (moveTimeMs <= 0) {
       moveTimeMs = 200;
     }
+  }
+
+  if (mode != 'h') {
 
     auto engine = make_unique<StockfishAdapter>();
     if (engine->initialize()) {

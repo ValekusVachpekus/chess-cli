@@ -23,12 +23,21 @@ bool isMoveInList(const vector<Coordinates> &moves, int x, int y) {
 void drawBoard(ChessFacade &game, int cursorX, int cursorY,
                const vector<Coordinates> &validMoves, const string &status,
                const string &botInfo, Color turn, bool flipped,
-               bool flipOnTurn) {
+               bool flipOnTurn, bool centerBoard, bool hideUI) {
   clear();
+  int rows = 0, cols = 0;
+  getmaxyx(stdscr, rows, cols);
+  const int boardWidth = 19;
+  const int boardHeight = 10;
+  int offsetX =
+      centerBoard ? ((cols > boardWidth) ? (cols - boardWidth) / 2 : 0) : 0;
+  int offsetY =
+      centerBoard ? ((rows > boardHeight) ? (rows - boardHeight) / 2 : 0) : 0;
+
   int row = 8;
   for (int sy = 7; sy >= 0; sy--) {
     int displayRow = flipped ? (8 - sy) : row--;
-    mvprintw(8 - sy, 0, "%d| ", displayRow);
+    mvprintw(offsetY + (8 - sy), offsetX, "%d| ", displayRow);
     for (int sx = 0; sx < 8; sx++) {
       int bx = flipped ? (7 - sx) : sx;
       int by = flipped ? (7 - sy) : sy;
@@ -57,7 +66,7 @@ void drawBoard(ChessFacade &game, int cursorX, int cursorY,
       if (isCursor) {
         attron(A_REVERSE);
       }
-      mvprintw(8 - sy, 3 + sx * 2, "%s", cell.c_str());
+      mvprintw(offsetY + (8 - sy), offsetX + 3 + sx * 2, "%s", cell.c_str());
       if (isCursor) {
         attroff(A_REVERSE);
       }
@@ -67,17 +76,21 @@ void drawBoard(ChessFacade &game, int cursorX, int cursorY,
     }
   }
   if (flipped) {
-    mvprintw(9, 0, "| H G F E D C B A");
+    mvprintw(offsetY + 9, offsetX, "| H G F E D C B A");
   } else {
-    mvprintw(9, 0, "| A B C D E F G H");
+    mvprintw(offsetY + 9, offsetX, "| A B C D E F G H");
   }
-  mvprintw(11, 0, "Turn: %s", (turn == WHITE) ? "WHITE" : "BLACK");
-  mvprintw(12, 0, "Status: %s", status.c_str());
-  mvprintw(13, 0, "%s", botInfo.c_str());
-  mvprintw(14, 0, "Flip on turn: %s", flipOnTurn ? "ON" : "OFF");
-  mvprintw(15, 0,
-           "Controls: arrows/hjkl move, Enter select/move, f toggle flip, q "
-           "quit");
+  if (!hideUI) {
+    mvprintw(offsetY + 11, offsetX, "Turn: %s",
+             (turn == WHITE) ? "WHITE" : "BLACK");
+    mvprintw(offsetY + 12, offsetX, "Status: %s", status.c_str());
+    mvprintw(offsetY + 13, offsetX, "%s", botInfo.c_str());
+    mvprintw(offsetY + 14, offsetX, "Flip on turn: %s",
+             flipOnTurn ? "ON" : "OFF");
+    mvprintw(offsetY + 15, offsetX,
+             "Controls: arrows/jkl move, Enter select/move, f flip, C center, "
+             "h hide, q quit");
+  }
   refresh();
 }
 
@@ -202,6 +215,8 @@ int main() {
   int cursorY = 0;
   bool flipped = false;
   bool flipOnTurn = false;
+  bool centerBoard = false;
+  bool hideUI = false;
 
   if (botEnabled) {
     string side = "Bot: ";
@@ -224,7 +239,7 @@ int main() {
     if (botEnabled && game.isBotTurn()) {
       status = "Bot is thinking...";
       drawBoard(game, cursorX, cursorY, {}, status, botInfo, turn, flipped,
-                flipOnTurn);
+                flipOnTurn, centerBoard, hideUI);
       refresh();
       usleep(100000);  // Brief display of thinking message
       
@@ -241,16 +256,20 @@ int main() {
 
     vector<Coordinates> validMoves = game.getSelectedValidMoves();
     drawBoard(game, cursorX, cursorY, validMoves, status, botInfo, turn,
-              flipped, flipOnTurn);
+              flipped, flipOnTurn, centerBoard, hideUI);
     int ch = getch();
     if (ch == 'q' || ch == 'Q') {
       break;
     }
-    if ((ch == KEY_UP || ch == 'k') && cursorY < 7) {
+    if (ch == 'h') {
+      hideUI = !hideUI;
+    } else if (ch == 'c' || ch == 'C') {
+      centerBoard = !centerBoard;
+    } else if ((ch == KEY_UP || ch == 'k') && cursorY < 7) {
       cursorY++;
     } else if ((ch == KEY_DOWN || ch == 'j') && cursorY > 0) {
       cursorY--;
-    } else if ((ch == KEY_LEFT || ch == 'h') && cursorX > 0) {
+    } else if ((ch == KEY_LEFT) && cursorX > 0) {
       cursorX--;
     } else if ((ch == KEY_RIGHT || ch == 'l') && cursorX < 7) {
       cursorX++;
@@ -287,7 +306,7 @@ int main() {
 
   if (game.isGameOver()) {
     drawBoard(game, cursorX, cursorY, {}, game.getLastMessage(), botInfo,
-              game.getCurrentTurn(), flipped, flipOnTurn);
+              game.getCurrentTurn(), flipped, flipOnTurn, centerBoard, hideUI);
     getch();
   }
 

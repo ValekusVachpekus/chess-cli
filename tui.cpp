@@ -193,6 +193,9 @@ void printHelp() {
       << "Options:\n"
       << "  -m, --mode <mode>    Game mode: human, white, black, auto\n"
       << "  -t, --time <ms>      Bot movetime in milliseconds (default: 200)\n"
+      << "  -f, --flip           Flip board at start (black on bottom)\n"
+      << "  -c, --center         Center board in terminal\n"
+      << "  -H, --hide-ui        Hide UI text (show only board)\n"
       << "  -h, --help           Show this help\n"
       << "  -v, --version        Show version\n";
 }
@@ -204,17 +207,23 @@ int main(int argc, char **argv) {
   bool modeProvided = false;
   bool timeProvided = false;
   int moveTimeMs = 200;
+  bool startFlipped = false;
+  bool startCentered = false;
+  bool startHiddenUI = false;
 
   static struct option long_options[] = {
       {"mode", required_argument, nullptr, 'm'},
       {"time", required_argument, nullptr, 't'},
+      {"flip", no_argument, nullptr, 'f'},
+      {"center", no_argument, nullptr, 'c'},
+      {"hide-ui", no_argument, nullptr, 'H'},
       {"help", no_argument, nullptr, 'h'},
       {"version", no_argument, nullptr, 'v'},
       {nullptr, 0, nullptr, 0}};
 
   int opt;
   int option_index = 0;
-  while ((opt = getopt_long(argc, argv, "m:t:hv", long_options,
+  while ((opt = getopt_long(argc, argv, "m:t:fcHhv", long_options,
                             &option_index)) != -1) {
     switch (opt) {
     case 'm':
@@ -239,6 +248,15 @@ int main(int argc, char **argv) {
         return 1;
       }
       timeProvided = true;
+      break;
+    case 'f':
+      startFlipped = true;
+      break;
+    case 'c':
+      startCentered = true;
+      break;
+    case 'H':
+      startHiddenUI = true;
       break;
     case 'h':
       printHelp();
@@ -337,6 +355,15 @@ int main(int argc, char **argv) {
   bool flipOnTurn = false;
   bool centerBoard = false;
   bool hideUI = false;
+  if (startFlipped) {
+    flipped = true;
+  }
+  if (startCentered) {
+    centerBoard = true;
+  }
+  if (startHiddenUI) {
+    hideUI = true;
+  }
 
   if (botEnabled) {
     string side = "Bot: ";

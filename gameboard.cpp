@@ -771,6 +771,7 @@ void Pawn::prevrashenie(Type type) {
     }
 
     this->getGameboard()->setFigure(newFigure);
+    delete this;
 }
 
 class King : public Figure {

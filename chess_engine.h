@@ -39,6 +39,10 @@ public:
    * @return true if engine is ready, false if unavailable or crashed
    */
   virtual bool isAvailable() = 0;
+  virtual string getEvaluation(const string &cmd, int movetime_ms,
+                               bool isWhiteTurn) {
+    return "";
+  }
 
   /**
    * Initialize/reconnect to the engine

@@ -267,9 +267,9 @@ int main(int argc, char **argv) {
       modeArg = optarg;
       modeProvided = true;
       if (modeArg != "human" && modeArg != "white" && modeArg != "black" &&
-          modeArg != "auto") {
+          modeArg != "auto" && modeArg != "replay") {
         cerr << "Error: invalid mode '" << modeArg
-             << "'. Use human, white, black, auto.\n";
+             << "'. Use human, white, black, auto, replay.\n";
         return 1;
       }
       break;
@@ -346,15 +346,15 @@ int main(int argc, char **argv) {
       mode = 'b';
     } else if (modeArg == "auto") {
       mode = 'a';
+    } else if (modeArg == "replay") {
+      mode = 'r';
     } else {
       mode = 'h';
     }
   } else {
     vector<string> modeOptions = {
-        "Human vs Human",
-        "Bot plays White",
-        "Bot plays Black",
-        "Bot vs Bot",
+        "Human vs Human", "Bot plays White", "Bot plays Black",
+        "Bot vs Bot",     "Replay",
     };
     int modeIndex = promptMenu(2, "Select game mode:", modeOptions);
     if (modeIndex == 1) {
@@ -363,6 +363,8 @@ int main(int argc, char **argv) {
       mode = 'b';
     } else if (modeIndex == 3) {
       mode = 'a';
+    } else if (modeIndex == 4) {
+      mode = 'r';
     }
   }
 
@@ -440,8 +442,94 @@ int main(int argc, char **argv) {
     botInfo = side + ", " + to_string(moveTimeMs) + "ms";
   }
 
-  while (!game.isGameOver()) {
+  // Replay history
+  vector<string> replayHistory;
+  size_t replayIndex = 0;
+
+  if (mode == 'r') {
+    int r = 0, c = 0;
+    getmaxyx(stdscr, r, c);
+    int current_offsetY = startCentered ? ((r > 10) ? (r - 10) / 2 : 0) : 0;
+
+    string filename = promptInput(current_offsetY + 11,
+                                  "Enter replay file path: ", "save.txt");
+    ifstream inFile(filename);
+    if (inFile.is_open()) {
+      string mv;
+      while (inFile >> mv) {
+        replayHistory.push_back(mv);
+      }
+      inFile.close();
+      game.fillBoard();
+      status = "Replay loaded. Total moves: " + to_string(replayHistory.size());
+    } else {
+      endwin();
+      cerr << "Error: Replay file '" << filename << "' not found!\n";
+      return 1;
+    }
+  }
+
+  while (mode == 'r' || !game.isGameOver()) {
     Color turn = game.getCurrentTurn();
+
+    // Replay mode.
+    if (mode == 'r') {
+      drawBoard(game, cursorX, cursorY, {}, status, botInfo, turn, flipped,
+                flipOnTurn, centerBoard, hideUI);
+
+      int ch = getch();
+      if (ch == 'q' || ch == 'Q') {
+        break;
+      } else if (ch == 'h') {
+        hideUI = !hideUI;
+      } else if (ch == 'c' || ch == 'C') {
+        centerBoard = !centerBoard;
+      } else if (ch == 'f' || ch == 'F') {
+        flipOnTurn = !flipOnTurn;
+        if (flipOnTurn) {
+          flipped = (game.getCurrentTurn() == BLACK);
+        }
+      } else if (ch == 'e' || ch == 'E') {
+        status = "Move " + to_string(replayIndex) + "/" +
+                 to_string(replayHistory.size()) + " | " +
+                 "Analyzing position...";
+        drawBoard(game, cursorX, cursorY, {}, status, botInfo, turn, flipped,
+                  flipOnTurn, centerBoard, hideUI);
+        refresh();
+        status = "Move " + to_string(replayIndex) + "/" +
+                 to_string(replayHistory.size()) + " | " +
+                 game.getPositionEvaluation();
+      } else if (ch == KEY_RIGHT || ch == 'l') {
+        if (replayIndex < replayHistory.size()) {
+          game.makeMoveByUCI(replayHistory[replayIndex]);
+          replayIndex++;
+          status = "Move " + to_string(replayIndex) + "/" +
+                   to_string(replayHistory.size());
+          if (flipOnTurn) {
+            flipped = (game.getCurrentTurn() == BLACK);
+          }
+        } else {
+          status =
+              "End of replay. Total moves: " + to_string(replayHistory.size());
+        }
+      } else if (ch == KEY_LEFT || ch == 'j') {
+        if (replayIndex > 0) {
+          replayIndex--;
+          game.fillBoard();
+          for (size_t i = 0; i < replayIndex; i++) {
+            game.makeMoveByUCI(replayHistory[i]);
+          }
+          status = "Move " + to_string(replayIndex) + "/" +
+                   to_string(replayHistory.size());
+          if (flipOnTurn) {
+            flipped = (game.getCurrentTurn() == BLACK);
+          }
+        } else {
+          status = "Start of replay. Initial position.";
+        }
+      }
+      continue;
+    }
     // network_adapter
     if (networkEnabled) {
       bool isMyTurn =
@@ -606,9 +694,43 @@ int main(int argc, char **argv) {
   }
 
   if (game.isGameOver()) {
-    drawBoard(game, cursorX, cursorY, {}, game.getLastMessage(), botInfo,
-              game.getCurrentTurn(), flipped, flipOnTurn, centerBoard, hideUI);
-    getch();
+    string finalStatus =
+        game.getLastMessage() + " | Final. You can save game to see replay";
+    while (true) {
+      drawBoard(game, cursorX, cursorY, {}, finalStatus, botInfo,
+                game.getCurrentTurn(), flipped, flipOnTurn, centerBoard,
+                hideUI);
+
+      int ch = getch();
+      if (ch == 's' || ch == 'S') {
+        int r = 0, c = 0;
+        getmaxyx(stdscr, r, c);
+        int current_offsetY = centerBoard ? ((r > 10) ? (r - 10) / 2 : 0) : 0;
+
+        string filename =
+            promptInput(current_offsetY + 17, "Save to file: ", "save.txt");
+        ofstream outFile(filename);
+        if (outFile.is_open()) {
+          for (const string &m : game.getMoveHistory()) {
+            outFile << m << " ";
+          }
+          outFile.close();
+          finalStatus =
+              "Game saved to " + filename + " | Press any key to exit";
+        } else {
+          finalStatus =
+              "Failed to save file! | 's' retry, any other key to exit";
+        }
+      } else if (ch == 'f' || ch == 'F') {
+        flipped = !flipped;
+      } else if (ch == 'c' || ch == 'C') {
+        centerBoard = !centerBoard;
+      } else if (ch == 'h') {
+        hideUI = !hideUI;
+      } else {
+        break;
+      }
+    }
   }
 
   endwin();

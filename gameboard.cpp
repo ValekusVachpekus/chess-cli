@@ -1178,6 +1178,13 @@ public:
     gameboard->clearBoard();
     moveHistory.clear();
     positionCounts.clear();
+    gameOver = false;
+    lastMessage = "";
+    currentTurn = WHITE;
+    fullmoveNumber = 1;
+    halfmoveClockCount = 0;
+    selected = nullptr;
+
     // Pawns
     for (int i = 0; i < 8; i++) {
       gameboard->setFigure(new Pawn(i, WHITE, gameboard, Coordinates(i, 1)));
@@ -1222,6 +1229,14 @@ public:
     canCastleBK = true;
     canCastleBQ = true;
     positionCounts[getPositionKey()] = 1;
+  }
+
+  string getPositionEvaluation() {
+    if (!engine || !engine->isAvailable()) {
+      return "Evaluation error: Stockfish process is offline";
+    }
+    string pos_cmd = getStockfishPositionCmd();
+    return engine->getEvaluation(pos_cmd, moveTimeMs, currentTurn == WHITE);
   }
 
   Coordinates stringToCoordinates(string cord) {

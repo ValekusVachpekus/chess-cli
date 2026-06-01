@@ -23,8 +23,10 @@
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
+#include <iomanip>
 #include <iostream>
 #include <signal.h>
+#include <sstream>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <thread>
@@ -206,6 +208,70 @@ public:
     available = true;
     cout << "Stockfish initialized successfully" << endl;
     return true;
+  }
+
+  string getEvaluation(const string &cmd, int movetime_ms,
+                       bool isWhiteTurn) override {
+    if (!available)
+      return "Stockfish unavailable";
+    if (!writeCommand(cmd))
+      return "Failed to send position command";
+    if (!writeCommand("go movetime " + to_string(movetime_ms)))
+      return "Failed to send go command";
+
+    string last_score = "0.00";
+    string best_move = "";
+
+    while (true) {
+      string line = readLine(movetime_ms + 1000);
+      if (line.empty())
+        break;
+
+      size_t score_pos = line.find("score ");
+      if (score_pos != string::npos) {
+        // Парсинг оценки в пешках (centipawns)
+        size_t cp_pos = line.find("cp ", score_pos);
+        if (cp_pos != string::npos) {
+          try {
+            int cp = stoi(line.substr(cp_pos + 3));
+            if (!isWhiteTurn)
+              cp = -cp; // Перевод в абсолютную оценку (+ у белых, - у черных)
+            double val = cp / 100.0;
+            stringstream ss;
+            if (val > 0)
+              ss << "+";
+            ss << fixed << setprecision(2) << val;
+            last_score = ss.str();
+          } catch (...) {
+          }
+        }
+        // Парсинг матовых угроз
+        size_t mate_pos = line.find("mate ", score_pos);
+        if (mate_pos != string::npos) {
+          try {
+            int moves = stoi(line.substr(mate_pos + 5));
+            if (!isWhiteTurn)
+              moves = -moves;
+            if (moves > 0)
+              last_score = "M" + to_string(moves);
+            else
+              last_score = "-M" + to_string(abs(moves));
+          } catch (...) {
+          }
+        }
+      }
+
+      // Ожидание финального лучшего хода для завершения цикла
+      if (line.find("bestmove") != string::npos) {
+        size_t move_pos = line.find("bestmove") + 9;
+        size_t move_end = line.find(" ", move_pos);
+        if (move_end == string::npos)
+          move_end = line.length();
+        best_move = line.substr(move_pos, move_end - move_pos);
+        break;
+      }
+    }
+    return "Evaluation: " + last_score + " | Best move: " + best_move;
   }
 
   string getBestMove(const string &cmd, int movetime_ms) override {

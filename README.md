@@ -77,4 +77,7 @@ Game supports local multiplayer via UCI.
 * [x] Add 2 player game via 2 screens or localhost.
 * [ ] Add web GUI interface.
 
+## LICENSE
+
+Uses GNU GPL v3 [LICENSE](./LICENSE). \
 Author: Ilia Shchetkov

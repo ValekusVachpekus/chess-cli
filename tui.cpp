@@ -19,6 +19,7 @@
 #define CHESSGAME_SILENT
 #include "gameboard.cpp"
 #include "network_adapter.h"
+#include <fstream>
 #include <getopt.h>
 #include <locale.h>
 #include <ncurses.h>
@@ -108,8 +109,8 @@ void drawBoard(ChessFacade &game, int cursorX, int cursorY,
     mvprintw(offsetY + 14, offsetX, "Flip on turn: %s",
              flipOnTurn ? "ON" : "OFF");
     mvprintw(offsetY + 15, offsetX,
-             "Controls: arrows/jkl move, Enter select/move, f flip, C center, "
-             "h hide, q quit");
+             "Controls: arrows/jkl, Enter select, f flip, C center, h hide, s "
+             "save, o load, q quit");
   }
   refresh();
 }
@@ -523,6 +524,57 @@ int main(int argc, char **argv) {
       flipOnTurn = !flipOnTurn;
       if (flipOnTurn) {
         flipped = (game.getCurrentTurn() == BLACK);
+      }
+    } else if (ch == 's' || ch == 'S') {
+      // Вычисление текущего смещения по вертикали
+      int r = 0, c = 0;
+      getmaxyx(stdscr, r, c);
+      int current_offsetY = centerBoard ? ((r > 10) ? (r - 10) / 2 : 0) : 0;
+
+      // Экспорт истории в файл
+      string filename =
+          promptInput(current_offsetY + 17, "Save to file: ", "save.txt");
+      ofstream outFile(filename);
+      if (outFile.is_open()) {
+        for (const string &m : game.getMoveHistory()) {
+          outFile << m << " "; // Запись ходов через пробел
+        }
+        outFile.close();
+        status = "Game saved to " + filename;
+      } else {
+        status = "Failed to save file!";
+      }
+    } else if (ch == 'o' || ch == 'O') {
+      if (networkEnabled) {
+        status = "Cannot load game in multiplayer!";
+      } else {
+        // Вычисление текущего смещения по вертикали
+        int r = 0, c = 0;
+        getmaxyx(stdscr, r, c);
+        int current_offsetY = centerBoard ? ((r > 10) ? (r - 10) / 2 : 0) : 0;
+
+        string filename =
+            promptInput(current_offsetY + 17, "Load from file: ", "save.txt");
+        ifstream inFile(filename);
+        if (inFile.is_open()) {
+          vector<string> history;
+          string move;
+          while (inFile >> move) {
+            history.push_back(move);
+          }
+          inFile.close();
+
+          if (game.loadFromHistory(history)) {
+            status = "Game loaded from " + filename;
+            if (flipOnTurn) {
+              flipped = (game.getCurrentTurn() == BLACK);
+            }
+          } else {
+            status = "Error loading game!";
+          }
+        } else {
+          status = "File not found!";
+        }
       }
     } else if (ch == '\n' || ch == KEY_ENTER) {
       int bx = flipped ? (7 - cursorX) : cursorX;

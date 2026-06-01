@@ -1175,6 +1175,7 @@ public:
   bool isGameOver() const { return gameOver; }
   string getLastMessage() const { return lastMessage; }
   void fillBoard() {
+    gameboard->clearBoard();
     moveHistory.clear();
     positionCounts.clear();
     // Pawns
@@ -1522,6 +1523,20 @@ public:
     }
 
     // Turn already switched in moveFigure()
+    return true;
+  }
+
+  const vector<string> &getMoveHistory() const { return moveHistory; }
+
+  bool loadFromHistory(const vector<string> &history) {
+    fillBoard();
+    for (const string &uci : history) {
+      if (!makeMoveByUCI(uci)) {
+        lastMessage = "Error: Invalid move in save file!";
+        return false;
+      }
+    }
+    lastMessage = "Game loaded successfully!";
     return true;
   }
 

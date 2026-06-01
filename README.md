@@ -3,17 +3,21 @@ Written in C++, source code of engine is `gameboard.cpp`.
 `gameboard.cpp` is also a CLI version of chess. Controls are using commands (e.g. e2 e4). \
 Compilation: `g++ gameboard.cpp -o gameboard`. \
 Using: `./gameboard`. \
-<img width="411" height="691" alt="изображение" src="https://github.com/user-attachments/assets/346cfec0-ef96-4cce-93aa-e07e425970fb" />
+<img width="1128" height="274" alt="image" src="https://github.com/user-attachments/assets/1e26e1b7-8a82-4e5f-86fa-e7d3f7ea1722" />
+
 
 ## TUI version
 `tui.cpp` is a TUI version of game. Controls are arrows or VIM keys. It also can rotate board depending on player's side. \
 Compilation: `g++ tui.cpp -lncurses -o chess-tui`. \
 Using: `./chess-tui` \
-There are some features at TUI version:
+There are hot keys of TUI version:
  - f - flip gameboard when turn
  - c - center the gameboard
  - h - hide interface
-<img width="787" height="331" alt="изображение" src="https://github.com/user-attachments/assets/ce491dfd-ac9a-4fb4-a027-baff90dba63a" />
+ - s - save game
+ - o - load game
+<img width="963" height="340" alt="image" src="https://github.com/user-attachments/assets/470df939-f4be-4749-8d99-8d6dc260015d" />
+
 
 ## CLI Options
 
@@ -26,6 +30,7 @@ The TUI version supports standard GNU/POSIX command-line arguments for quick con
     * `white` — Human plays White, bot plays Black.
     * `black` — Human plays Black, bot plays White.
     * `auto` — Bot vs Bot simulation.
+    * `replay` — Replay of a saved game with Stockfish feedback.
 * `-t, --time <ms>`
     Set the bot movetime in milliseconds (default: 200).
 
@@ -36,6 +41,9 @@ The TUI version supports standard GNU/POSIX command-line arguments for quick con
     Center the board dynamically inside your terminal window.
 * `-H, --hide-ui`
     No UI mode. Hide all helper UI text, engine logs, and status bars, showing only the chess board.
+* `-m, --mode <mode>`
+    Chose game mode.
+To see more, use `chess-tui -h`.
 
 ### Generic Options
 * `-h, --help`
@@ -71,6 +79,16 @@ Game supports local multiplayer via UCI.
 
 2. Connect to a server (Plays Black):
 `chess-tui -m human -C <IP (default 127.0.0.1)> -P <Port (default 8888)>`
+
+## Replay mode
+
+Game supports replay of game with stockfish feedback.
+1. Save game, using `s`.
+2. Launch game in `replay` mode using TUI or `chess-tui -m replay`.
+3. Type your game save path.
+4. Use arrows to move turns and `E` to evaluate move and best move using stockfish.
+<img width="960" height="354" alt="image" src="https://github.com/user-attachments/assets/9057dbc6-8033-4f0f-aaa8-dc6f5c11b644" />
+
 
 ## TODO
 * [x] Add Stockfish.

@@ -109,7 +109,8 @@ void drawBoard(ChessFacade &game, int cursorX, int cursorY,
     mvprintw(offsetY + 14, offsetX, "Flip on turn: %s",
              flipOnTurn ? "ON" : "OFF");
     mvprintw(offsetY + 15, offsetX,
-             "Controls: arrows/jkl, Enter select, f flip, C center, h hide, s "
+             "Controls: arrows/jkl, Enter select, f flip, C center, i hide "
+             "interface, s "
              "save, o load, q quit");
   }
   refresh();
@@ -493,7 +494,7 @@ int main(int argc, char **argv) {
 
       if (ch == 'q' || ch == 'Q') {
         break;
-      } else if (ch == 'h') {
+      } else if (ch == 'i') {
         hideUI = !hideUI;
       } else if (ch == 'c' || ch == 'C') {
         centerBoard = !centerBoard;
@@ -613,7 +614,7 @@ int main(int argc, char **argv) {
     if (ch == 'q' || ch == 'Q') {
       break;
     }
-    if (ch == 'h') {
+    if (ch == 'i') {
       hideUI = !hideUI;
     } else if (ch == 'c' || ch == 'C') {
       centerBoard = !centerBoard;
@@ -621,7 +622,7 @@ int main(int argc, char **argv) {
       cursorY++;
     } else if ((ch == KEY_DOWN || ch == 'j') && cursorY > 0) {
       cursorY--;
-    } else if ((ch == KEY_LEFT) && cursorX > 0) {
+    } else if ((ch == KEY_LEFT) || ch == 'h' && cursorX > 0) {
       cursorX--;
     } else if ((ch == KEY_RIGHT || ch == 'l') && cursorX < 7) {
       cursorX++;
@@ -742,7 +743,7 @@ int main(int argc, char **argv) {
         flipped = !flipped;
       } else if (ch == 'c' || ch == 'C') {
         centerBoard = !centerBoard;
-      } else if (ch == 'h') {
+      } else if (ch == 'i') {
         hideUI = !hideUI;
       } else {
         break;

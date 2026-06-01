@@ -63,9 +63,18 @@ When game is launched without CLI arguments, there are 4 game modes available vi
 * a - bot vs bot
 Also you can chose movetime (default 200ms). More movetime makes bot smarter.
 
+## Multiplayer mode
+
+Game supports local multiplayer via UCI.
+1. Start server (Plays White):
+`chess-tui -m human -S`
+
+2. Connect to a server (Plays Black):
+`chess-tui -m human -C <IP (default 127.0.0.1)> -P <Port (default 8888)>`
+
 ## TODO
 * [x] Add Stockfish.
-* [ ] Add 2 player game via 2 screens or localhost.
+* [x] Add 2 player game via 2 screens or localhost.
 * [ ] Add web GUI interface.
 
 Author: Ilia Shchetkov

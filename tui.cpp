@@ -239,6 +239,7 @@ int main(int argc, char **argv) {
   bool startFlipped = false;
   bool startCentered = false;
   bool startHiddenUI = false;
+  bool autoPlay = false;
 
   // For network_adapter
   bool isServer = false;
@@ -478,13 +479,27 @@ int main(int argc, char **argv) {
       drawBoard(game, cursorX, cursorY, {}, status, botInfo, turn, flipped,
                 flipOnTurn, centerBoard, hideUI);
 
+      if (autoPlay) {
+        timeout(moveTimeMs); // Задержка берется из -t (по умолчанию 200мс)
+      } else {
+        timeout(-1); // Обычное блокирующее ожидание
+      }
+
       int ch = getch();
+
+      if (autoPlay && ch == ERR) {
+        ch = KEY_RIGHT;
+      }
+
       if (ch == 'q' || ch == 'Q') {
         break;
       } else if (ch == 'h') {
         hideUI = !hideUI;
       } else if (ch == 'c' || ch == 'C') {
         centerBoard = !centerBoard;
+      } else if (ch == ' ') {
+        autoPlay = !autoPlay; // Старт / Стоп автоплея по нажатию на пробел
+        status = autoPlay ? "Autoplay ON" : "Autoplay OFF";
       } else if (ch == 'f' || ch == 'F') {
         flipOnTurn = !flipOnTurn;
         if (flipOnTurn) {
@@ -492,8 +507,7 @@ int main(int argc, char **argv) {
         }
       } else if (ch == 'e' || ch == 'E') {
         status = "Move " + to_string(replayIndex) + "/" +
-                 to_string(replayHistory.size()) + " | " +
-                 "Analyzing position...";
+                 to_string(replayHistory.size()) + " | Analyzing position...";
         drawBoard(game, cursorX, cursorY, {}, status, botInfo, turn, flipped,
                   flipOnTurn, centerBoard, hideUI);
         refresh();
@@ -510,11 +524,13 @@ int main(int argc, char **argv) {
             flipped = (game.getCurrentTurn() == BLACK);
           }
         } else {
+          autoPlay = false; // Выключаем автоплей на конце файла
           status =
               "End of replay. Total moves: " + to_string(replayHistory.size());
         }
       } else if (ch == KEY_LEFT || ch == 'j') {
         if (replayIndex > 0) {
+          autoPlay = false; // Клик назад останавливает автоплей
           replayIndex--;
           game.fillBoard();
           for (size_t i = 0; i < replayIndex; i++) {

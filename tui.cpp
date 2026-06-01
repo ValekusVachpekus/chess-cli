@@ -207,18 +207,19 @@ Type promptPromotion(Color color) {
 }
 
 void printHelp() {
-  cout << "Usage: chess-tui [OPTIONS]\n\n"
-       << "Options:\n"
-       << "  -m, --mode <mode>    Game mode: human, white, black, auto\n"
-       << "  -t, --time <ms>      Bot movetime in milliseconds (default: 200)\n"
-       << "  -f, --flip           Flip board at start (black on bottom)\n"
-       << "  -c, --center         Center board in terminal\n"
-       << "  -H, --hide-ui        Hide UI text (show only board)\n"
-       << "  -S, --server         Start as server (plays White)\n"
-       << "  -C, --connect <IP>   Connect to a server (plays Black)\n"
-       << "  -P, --port <port>    Network port (default: 8888)\n"
-       << "  -h, --help           Show this help\n"
-       << "  -v, --version        Show version\n";
+  cout
+      << "Usage: chess-tui [OPTIONS]\n\n"
+      << "Options:\n"
+      << "  -m, --mode <mode>    Game mode: human, white, black, auto, replay\n"
+      << "  -t, --time <ms>      Bot movetime in milliseconds (default: 200)\n"
+      << "  -f, --flip           Flip board at start (black on bottom)\n"
+      << "  -c, --center         Center board in terminal\n"
+      << "  -H, --hide-ui        Hide UI text (show only board)\n"
+      << "  -S, --server         Start as server (plays White)\n"
+      << "  -C, --connect <IP>   Connect to a server (plays Black)\n"
+      << "  -P, --port <port>    Network port (default: 8888)\n"
+      << "  -h, --help           Show this help\n"
+      << "  -v, --version        Show version\n";
 }
 
 void printVersion() {

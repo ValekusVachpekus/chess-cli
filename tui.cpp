@@ -196,9 +196,9 @@ void printHelp() {
        << "  -f, --flip           Flip board at start (black on bottom)\n"
        << "  -c, --center         Center board in terminal\n"
        << "  -H, --hide-ui        Hide UI text (show only board)\n"
-       << "  -S  --server         Start as server, specify port. \n"
-       << "  -C  --connect        Connect to a server, specify IP address. \n"
-       << "  -P  --port           Connect to a server, specify port. \n"
+       << "  -S, --server         Start as server (plays White)\n"
+       << "  -C, --connect <IP>   Connect to a server (plays Black)\n"
+       << "  -P, --port <port>    Network port (default: 8888)\n"
        << "  -h, --help           Show this help\n"
        << "  -v, --version        Show version\n";
 }
@@ -391,7 +391,7 @@ int main(int argc, char **argv) {
   bool flipOnTurn = false;
   bool centerBoard = false;
   bool hideUI = false;
-  if (startFlipped) {
+  if (startFlipped || isClient || mode == 'w') {
     flipped = true;
   }
   if (startCentered) {

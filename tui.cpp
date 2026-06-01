@@ -196,11 +196,14 @@ void printHelp() {
        << "  -f, --flip           Flip board at start (black on bottom)\n"
        << "  -c, --center         Center board in terminal\n"
        << "  -H, --hide-ui        Hide UI text (show only board)\n"
+       << "  -S  --server         Start as server, specify port. \n"
+       << "  -C  --connect        Connect to a server, specify IP address. \n"
+       << "  -P  --port           Connect to a server, specify port. \n"
        << "  -h, --help           Show this help\n"
        << "  -v, --version        Show version\n";
 }
 
-void printVersion() { cout << "chess-tui version 1.0.0\n"; }
+void printVersion() { cout << "chess-tui version 1.1.0\n"; }
 
 int main(int argc, char **argv) {
   string modeArg;

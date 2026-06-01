@@ -1379,6 +1379,13 @@ public:
         bool moved = selected->move(coordinates);
         if (moved) {
 
+          if (movingType == PAWN) {
+            IFigure *newPiece = gameboard->getFigure(coordinates);
+            if (newPiece != nullptr && newPiece->getType() != PAWN) {
+              selected = newPiece;
+            }
+          }
+
           char fX = 'a' + from.getX();
           char fY = '1' + from.getY();
           char tX = 'a' + coordinates.getX();

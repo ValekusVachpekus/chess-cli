@@ -1,7 +1,7 @@
 #define CHESSGAME_NO_MAIN
 #define CHESSGAME_SILENT
 #include "gameboard.cpp"
-
+#include "network_adapter.h"
 #include <getopt.h>
 #include <locale.h>
 #include <ncurses.h>
@@ -21,10 +21,12 @@ bool isMoveInList(const vector<Coordinates> &moves, int x, int y) {
   return false;
 }
 
+// Added network_adapter
 void drawBoard(ChessFacade &game, int cursorX, int cursorY,
                const vector<Coordinates> &validMoves, const string &status,
                const string &botInfo, Color turn, bool flipped, bool flipOnTurn,
-               bool centerBoard, bool hideUI) {
+               bool centerBoard, bool hideUI, string gameMode = "white",
+               NetworkAdapter *netAdapter = nullptr) {
   clear();
   int rows = 0, cols = 0;
   getmaxyx(stdscr, rows, cols);
@@ -194,11 +196,14 @@ void printHelp() {
        << "  -f, --flip           Flip board at start (black on bottom)\n"
        << "  -c, --center         Center board in terminal\n"
        << "  -H, --hide-ui        Hide UI text (show only board)\n"
+       << "  -S, --server         Start as server (plays White)\n"
+       << "  -C, --connect <IP>   Connect to a server (plays Black)\n"
+       << "  -P, --port <port>    Network port (default: 8888)\n"
        << "  -h, --help           Show this help\n"
        << "  -v, --version        Show version\n";
 }
 
-void printVersion() { cout << "chess-tui version 1.0.0\n"; }
+void printVersion() { cout << "chess-tui version 1.1.0\n"; }
 
 int main(int argc, char **argv) {
   string modeArg;
@@ -209,9 +214,18 @@ int main(int argc, char **argv) {
   bool startCentered = false;
   bool startHiddenUI = false;
 
+  // For network_adapter
+  bool isServer = false;
+  bool isClient = false;
+  string connectIp = "";
+  int port = 8888;
+
   static struct option long_options[] = {
       {"mode", required_argument, nullptr, 'm'},
       {"time", required_argument, nullptr, 't'},
+      {"server", no_argument, nullptr, 'S'},        // <-- ДОБАВИТЬ
+      {"connect", required_argument, nullptr, 'C'}, // <-- ДОБАВИТЬ
+      {"port", required_argument, nullptr, 'P'},    // <-- ДОБАВИТЬ
       {"flip", no_argument, nullptr, 'f'},
       {"center", no_argument, nullptr, 'c'},
       {"hide-ui", no_argument, nullptr, 'H'},
@@ -221,7 +235,7 @@ int main(int argc, char **argv) {
 
   int opt;
   int option_index = 0;
-  while ((opt = getopt_long(argc, argv, "m:t:fcHhv", long_options,
+  while ((opt = getopt_long(argc, argv, "m:t:SC:P:fcHhv", long_options,
                             &option_index)) != -1) {
     switch (opt) {
     case 'm':
@@ -262,6 +276,16 @@ int main(int argc, char **argv) {
     case 'v':
       printVersion();
       return 0;
+    case 'S': // Network start
+      isServer = true;
+      break;
+    case 'C':
+      isClient = true;
+      connectIp = optarg;
+      break;
+    case 'P':
+      port = stoi(optarg);
+      break; // net end
     default:
       return 1;
     }
@@ -329,8 +353,22 @@ int main(int argc, char **argv) {
     }
   }
 
-  if (mode != 'h') {
+  NetworkAdapter netAdapter;
+  bool networkEnabled = false;
 
+  if (isServer) {
+    if (netAdapter.startServer(port)) {
+      networkEnabled = true;
+      mode = 'n'; // n - маркер для сети
+    }
+  } else if (isClient) {
+    if (netAdapter.connectToServer(connectIp, port)) {
+      networkEnabled = true;
+      mode = 'n'; // n - маркер для сети
+    }
+  }
+
+  if (mode != 'h' && mode != 'n') {
     auto engine = make_unique<StockfishAdapter>();
     if (engine->initialize()) {
       game.setEngine(move(engine));
@@ -353,7 +391,7 @@ int main(int argc, char **argv) {
   bool flipOnTurn = false;
   bool centerBoard = false;
   bool hideUI = false;
-  if (startFlipped) {
+  if (startFlipped || isClient || mode == 'w') {
     flipped = true;
   }
   if (startCentered) {
@@ -379,6 +417,44 @@ int main(int argc, char **argv) {
 
   while (!game.isGameOver()) {
     Color turn = game.getCurrentTurn();
+    // network_adapter
+    if (networkEnabled) {
+      bool isMyTurn =
+          (isServer && turn == WHITE) || (isClient && turn == BLACK);
+
+      if (!isMyTurn) {
+        status = "Waiting for opponent...";
+        // Твоя функция drawBoard (добавил параметры)
+        drawBoard(game, cursorX, cursorY, {}, status, botInfo, turn, flipped,
+                  flipOnTurn, centerBoard, hideUI, "network", &netAdapter);
+
+        timeout(20); // Неблокирующий опрос
+        int ch = getch();
+        if (ch == 'q' || ch == 'Q')
+          break;
+
+        string enemyMove;
+        if (netAdapter.tryReadMove(enemyMove)) {
+          if (enemyMove == "DISCONNECT") {
+            status = "Opponent disconnected!";
+            timeout(-1);
+            drawBoard(game, cursorX, cursorY, {}, status, botInfo, turn,
+                      flipped, flipOnTurn, centerBoard, hideUI, "network",
+                      &netAdapter);
+            getch();
+            break;
+          }
+          // Применяем ход
+          game.makeMoveByUCI(enemyMove);
+          if (flipOnTurn)
+            flipped = (game.getCurrentTurn() == BLACK);
+        }
+        continue; // Ждем дальше
+      } else {
+        timeout(-1); // Наш ход — обычный getch
+      }
+    }
+    // End of network_adapter
 
     // Auto-play bot moves
     if (botEnabled && game.isBotTurn()) {
@@ -436,6 +512,9 @@ int main(int argc, char **argv) {
         }
       } else {
         if (game.moveFigure(cursor)) {
+          if (networkEnabled) {
+            netAdapter.sendMove(game.getLastExecutedUCIMove());
+          }
           status = game.getLastMessage();
           if (status.empty()) {
             status = "Move done";

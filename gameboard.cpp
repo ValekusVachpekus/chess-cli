@@ -19,6 +19,7 @@
 #include "stockfish_adapter.h"
 #include <cctype>
 #include <iostream>
+#include <map>
 #include <memory>
 #include <sstream>
 #include <vector>
@@ -986,6 +987,8 @@ private:
   bool gameOver = false;
   string lastMessage;
   string lastExecutedUCIMove = ""; // For multiplayer.
+  vector<string> moveHistory;      // История ходов в формате UCI
+  map<string, int> positionCounts; // Количество повторений каждой позиции
 
   // Engine support
   unique_ptr<ChessEngine> engine;
@@ -999,6 +1002,42 @@ private:
   bool canCastleWQ = true;
   bool canCastleBK = true;
   bool canCastleBQ = true;
+
+  // Формирование строки истории для Stockfish
+  string getStockfishPositionCmd() const {
+    string cmd = "position startpos";
+    if (!moveHistory.empty()) {
+      cmd += " moves";
+      for (const auto &m : moveHistory) {
+        cmd += " " + m;
+      }
+    }
+    return cmd;
+  }
+
+  // Извлечение идентификатора позиции (первые 4 поля FEN)
+  string getPositionKey() const {
+    string fen = getFEN();
+    stringstream ss(fen);
+    string pieces, turnField, castling, enPassant;
+    ss >> pieces >> turnField >> castling >> enPassant;
+    return pieces + " " + turnField + " " + castling + " " + enPassant;
+  }
+
+  // Проверка, есть ли у цвета хотя бы один легальный ход
+  bool hasLegalMoves(Color color) {
+    for (int x = 0; x < 8; x++) {
+      for (int y = 0; y < 8; y++) {
+        IFigure *fig = gameboard->getFigure(Coordinates(x, y));
+        if (fig != nullptr && fig->getColor() == color) {
+          if (!getLegalMovesFor(fig).empty()) {
+            return true;
+          }
+        }
+      }
+    }
+    return false;
+  }
 
   Coordinates uciToCoordinates(const string &uci) {
     if (uci.length() < 4) {
@@ -1045,6 +1084,7 @@ private:
     }
     return nullptr;
   }
+
   bool reportCheck() {
     lastMessage.clear();
     King *whiteKing = findKing(WHITE);
@@ -1055,6 +1095,7 @@ private:
         return true;
       }
       lastMessage = "Check to WHITE";
+      return false;
     }
     King *blackKing = findKing(BLACK);
     if (blackKing != nullptr && blackKing->isInCheck()) {
@@ -1064,7 +1105,15 @@ private:
         return true;
       }
       lastMessage = "Check to BLACK";
+      return false;
     }
+
+    if (!hasLegalMoves(currentTurn)) {
+      lastMessage = "Draw by Stalemate";
+      gameOver = true;
+      return true;
+    }
+
     return false;
   }
 
@@ -1115,6 +1164,8 @@ public:
   bool isGameOver() const { return gameOver; }
   string getLastMessage() const { return lastMessage; }
   void fillBoard() {
+    moveHistory.clear();
+    positionCounts.clear();
     // Pawns
     for (int i = 0; i < 8; i++) {
       gameboard->setFigure(new Pawn(i, WHITE, gameboard, Coordinates(i, 1)));
@@ -1158,6 +1209,7 @@ public:
     canCastleWQ = true;
     canCastleBK = true;
     canCastleBQ = true;
+    positionCounts[getPositionKey()] = 1;
   }
 
   Coordinates stringToCoordinates(string cord) {
@@ -1320,6 +1372,8 @@ public:
               lastExecutedUCIMove += "n";
           }
 
+          moveHistory.push_back(lastExecutedUCIMove);
+
           if (movingType == PAWN) {
             int dy = coordinates.getY() - from.getY();
             int dir = (movingColor == WHITE) ? 1 : -1;
@@ -1371,6 +1425,16 @@ public:
             }
           }
           reportCheck();
+
+          if (!gameOver) {
+            string key = getPositionKey();
+            positionCounts[key]++;
+            if (positionCounts[key] >= 3) {
+              lastMessage = "Draw by Threefold Repetition";
+              gameOver = true;
+            }
+          }
+
           clearSelection();
           // Switch turn
           currentTurn = (currentTurn == WHITE) ? BLACK : WHITE;
@@ -1455,8 +1519,10 @@ public:
       return Coordinates(-1, -1);
     }
 
-    string fen = getFEN();
-    string uci_move = engine->getBestMove(fen, moveTimeMs);
+    // string fen = getFEN();
+    // string uci_move = engine->getBestMove(fen, moveTimeMs);
+    string pos_cmd = getStockfishPositionCmd();
+    string uci_move = engine->getBestMove(pos_cmd, moveTimeMs);
 
     if (uci_move.empty() || uci_move.length() < 4) {
       return Coordinates(-1, -1);
@@ -1471,8 +1537,11 @@ public:
       return false;
     }
 
-    string fen = getFEN();
-    string uci_move = engine->getBestMove(fen, moveTimeMs);
+    // string fen = getFEN();
+    // string uci_move = engine->getBestMove(fen, moveTimeMs);
+
+    string pos_cmd = getStockfishPositionCmd();
+    string uci_move = engine->getBestMove(pos_cmd, moveTimeMs);
 
     if (uci_move.empty() || uci_move.length() < 4) {
       lastMessage = "ERROR: Bot move failed!";

@@ -208,13 +208,13 @@ public:
     return true;
   }
 
-  string getBestMove(const string &fen, int movetime_ms) override {
+  string getBestMove(const string &cmd, int movetime_ms) override {
     if (!available) {
       cerr << "Stockfish not available" << endl;
       return "";
     }
 
-    string pos_cmd = "position fen " + fen;
+    string pos_cmd = cmd;
     if (!writeCommand(pos_cmd)) {
       cerr << "Failed to send position command" << endl;
       available = false;

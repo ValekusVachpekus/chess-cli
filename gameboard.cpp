@@ -109,6 +109,8 @@ Type consumePromotionOverride() {
   return gPromotionOverride;
 }
 
+void clearPromotionOverride() { gPromotionOverrideActive = false; }
+
 class IFigure;
 
 const string ANSI_RESET = "\033[0m";
@@ -833,6 +835,15 @@ private:
           }
           continue;
         }
+        if (fig->getType() == PAWN) {
+          int dir = (fig->getColor() == WHITE) ? 1 : -1;
+          int dx = abs(fig->getCoordinates().getX() - square.getX());
+          int dy = square.getY() - fig->getCoordinates().getY();
+          if (dx == 1 && dy == dir) {
+            return true;
+          }
+          continue;
+        }
         vector<Coordinates> moves = fig->getValidMoves();
         for (const auto &move : moves) {
           if (move.equals(square)) {
@@ -1458,6 +1469,11 @@ public:
               }
             }
           }
+          currentTurn = (currentTurn == WHITE) ? BLACK : WHITE;
+          if (currentTurn == WHITE) {
+            fullmoveNumber++;
+          }
+
           reportCheck();
 
           if (!gameOver) {
@@ -1470,11 +1486,6 @@ public:
           }
 
           clearSelection();
-          // Switch turn
-          currentTurn = (currentTurn == WHITE) ? BLACK : WHITE;
-          if (currentTurn == WHITE) {
-            fullmoveNumber++;
-          }
         }
         return moved;
       }
@@ -1531,16 +1542,25 @@ public:
       return false;
     }
 
-    if (uciMove.length() >= 5) {
+    bool promotionOverrideSet = false;
+    if (uciMove.length() >= 5 && fig->getType() == PAWN &&
+        (to.getY() == 0 || to.getY() == 7)) {
       setPromotionOverride(promotionCharToType(uciMove[4]));
+      promotionOverrideSet = true;
     }
 
     if (!selectFigure(currentTurn, from)) {
+      if (promotionOverrideSet) {
+        clearPromotionOverride();
+      }
       return false;
     }
 
     if (!moveFigure(to)) {
       clearSelection();
+      if (promotionOverrideSet) {
+        clearPromotionOverride();
+      }
       return false;
     }
 

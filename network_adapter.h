@@ -19,6 +19,8 @@
 #define NETWORK_ADAPTER_H
 
 #include <arpa/inet.h>
+#include <cerrno>
+#include <cstring>
 #include <fcntl.h>
 #include <iostream>
 #include <netinet/in.h>
@@ -32,6 +34,7 @@ private:
   int client_fd;
   bool is_server;
   bool is_connected;
+  std::string receive_buffer;
 
 public:
   NetworkAdapter()
@@ -129,22 +132,27 @@ public:
       return false;
 
     char buffer[128];
-    ssize_t bytes_read = recv(client_fd, buffer, sizeof(buffer) - 1, 0);
+    ssize_t bytes_read = recv(client_fd, buffer, sizeof(buffer), 0);
 
     if (bytes_read > 0) {
-      buffer[bytes_read] = '\0';
-      std::string data(buffer);
-
-      // Ищем конец строки
-      size_t pos = data.find('\n');
-      if (pos != std::string::npos) {
-        move = data.substr(0, pos);
-        return true;
-      }
+      receive_buffer.append(buffer, static_cast<size_t>(bytes_read));
     } else if (bytes_read == 0) {
       // Соперник отключился (EOF сокета)
       is_connected = false;
       move = "DISCONNECT";
+      return true;
+    } else if (errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR) {
+      std::cerr << "Error: recv failed: " << std::strerror(errno) << "\n";
+      is_connected = false;
+      move = "DISCONNECT";
+      return true;
+    }
+
+    // Ищем конец строки
+    size_t pos = receive_buffer.find('\n');
+    if (pos != std::string::npos) {
+      move = receive_buffer.substr(0, pos);
+      receive_buffer.erase(0, pos + 1);
       return true;
     }
 

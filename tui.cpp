@@ -319,6 +319,21 @@ int main(int argc, char **argv) {
     }
   }
 
+  NetworkAdapter netAdapter;
+  bool networkEnabled = false;
+  char mode = 'h';
+  if (isServer) {
+    if (netAdapter.startServer(port)) {
+      networkEnabled = true;
+      mode = 'n'; // n - marker for network
+    }
+  } else if (isClient) {
+    if (netAdapter.connectToServer(connectIp, port)) {
+      networkEnabled = true;
+      mode = 'n'; // n - marker for network
+    }
+  }
+
   setlocale(LC_ALL, "");
   initscr();
   cbreak();
@@ -341,37 +356,38 @@ int main(int argc, char **argv) {
   string botInfo = "Bot: OFF";
   string status = "";
 
-  char mode = 'h';
-  if (modeProvided) {
-    if (modeArg == "white") {
-      mode = 'w';
-    } else if (modeArg == "black") {
-      mode = 'b';
-    } else if (modeArg == "auto") {
-      mode = 'a';
-    } else if (modeArg == "replay") {
-      mode = 'r';
+  if (!networkEnabled) {
+    if (modeProvided) {
+      if (modeArg == "white") {
+        mode = 'w';
+      } else if (modeArg == "black") {
+        mode = 'b';
+      } else if (modeArg == "auto") {
+        mode = 'a';
+      } else if (modeArg == "replay") {
+        mode = 'r';
+      } else {
+        mode = 'h';
+      }
     } else {
-      mode = 'h';
-    }
-  } else {
-    vector<string> modeOptions = {
-        "Human vs Human", "Bot plays White", "Bot plays Black",
-        "Bot vs Bot",     "Replay",
-    };
-    int modeIndex = promptMenu(2, "Select game mode:", modeOptions);
-    if (modeIndex == 1) {
-      mode = 'w';
-    } else if (modeIndex == 2) {
-      mode = 'b';
-    } else if (modeIndex == 3) {
-      mode = 'a';
-    } else if (modeIndex == 4) {
-      mode = 'r';
+      vector<string> modeOptions = {
+          "Human vs Human", "Bot plays White", "Bot plays Black",
+          "Bot vs Bot",     "Replay",
+      };
+      int modeIndex = promptMenu(2, "Select game mode:", modeOptions);
+      if (modeIndex == 1) {
+        mode = 'w';
+      } else if (modeIndex == 2) {
+        mode = 'b';
+      } else if (modeIndex == 3) {
+        mode = 'a';
+      } else if (modeIndex == 4) {
+        mode = 'r';
+      }
     }
   }
 
-  if (!modeProvided && mode != 'h') {
+  if (!modeProvided && mode != 'h' && mode != 'n') {
     string mt = promptInput(11, "Bot movetime in ms [200]: ", "200");
     try {
       moveTimeMs = stoi(mt);
@@ -380,21 +396,6 @@ int main(int argc, char **argv) {
     }
     if (moveTimeMs <= 0) {
       moveTimeMs = 200;
-    }
-  }
-
-  NetworkAdapter netAdapter;
-  bool networkEnabled = false;
-
-  if (isServer) {
-    if (netAdapter.startServer(port)) {
-      networkEnabled = true;
-      mode = 'n'; // n - маркер для сети
-    }
-  } else if (isClient) {
-    if (netAdapter.connectToServer(connectIp, port)) {
-      networkEnabled = true;
-      mode = 'n'; // n - маркер для сети
     }
   }
 
@@ -563,6 +564,16 @@ int main(int argc, char **argv) {
         int ch = getch();
         if (ch == 'q' || ch == 'Q')
           break;
+        if (ch == 'i') {
+          hideUI = !hideUI;
+        } else if (ch == 'c' || ch == 'C') {
+          centerBoard = !centerBoard;
+        } else if (ch == 'f' || ch == 'F') {
+          flipOnTurn = !flipOnTurn;
+          if (flipOnTurn) {
+            flipped = (game.getCurrentTurn() == BLACK);
+          }
+        }
 
         string enemyMove;
         if (netAdapter.tryReadMove(enemyMove)) {
@@ -576,7 +587,15 @@ int main(int argc, char **argv) {
             break;
           }
           // Применяем ход
-          game.makeMoveByUCI(enemyMove);
+          if (!game.makeMoveByUCI(enemyMove)) {
+            status = "Network Error: Opponent sent invalid move!";
+            timeout(-1);
+            drawBoard(game, cursorX, cursorY, {}, status, botInfo, turn,
+                      flipped, flipOnTurn, centerBoard, hideUI, "network",
+                      &netAdapter);
+            getch();
+            break;
+          }
           if (flipOnTurn)
             flipped = (game.getCurrentTurn() == BLACK);
         }
@@ -622,7 +641,7 @@ int main(int argc, char **argv) {
       cursorY++;
     } else if ((ch == KEY_DOWN || ch == 'j') && cursorY > 0) {
       cursorY--;
-    } else if ((ch == KEY_LEFT) || ch == 'h' && cursorX > 0) {
+    } else if ((ch == KEY_LEFT || ch == 'h') && cursorX > 0) {
       cursorX--;
     } else if ((ch == KEY_RIGHT || ch == 'l') && cursorX < 7) {
       cursorX++;

@@ -19,13 +19,17 @@
 #define NETWORK_ADAPTER_H
 
 #include <arpa/inet.h>
+#include <atomic>
 #include <cerrno>
+#include <chrono>
 #include <cstring>
 #include <fcntl.h>
 #include <iostream>
+#include <map>
 #include <netinet/in.h>
 #include <string>
 #include <sys/socket.h>
+#include <thread>
 #include <unistd.h>
 
 class NetworkAdapter {
@@ -36,20 +40,97 @@ private:
   bool is_connected;
   std::string receive_buffer;
 
+  // Переменные для фонового вещания
+  std::atomic<bool> stop_broadcast{false};
+  std::thread broadcast_thread;
+
+  void setNonBlocking(int fd) {
+    int flags = fcntl(fd, F_GETFL, 0);
+    fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+  }
+
+  // Фоновый поток, рассылающий UDP маяки
+  void startBroadcast(int port) {
+    stop_broadcast = false;
+    broadcast_thread = std::thread([this, port]() {
+      int udp_fd = socket(AF_INET, SOCK_DGRAM, 0);
+      if (udp_fd < 0)
+        return;
+      int broadcastEnable = 1;
+      setsockopt(udp_fd, SOL_SOCKET, SO_BROADCAST, &broadcastEnable,
+                 sizeof(broadcastEnable));
+
+      sockaddr_in broadcast_addr{};
+      broadcast_addr.sin_family = AF_INET;
+      broadcast_addr.sin_port = htons(14889); // Отдельный порт для поиска
+      broadcast_addr.sin_addr.s_addr = inet_addr("255.255.255.255");
+
+      std::string msg = "CHESS_SERVER_V1:" + std::to_string(port);
+      while (!stop_broadcast) {
+        sendto(udp_fd, msg.c_str(), msg.length(), 0,
+               (struct sockaddr *)&broadcast_addr, sizeof(broadcast_addr));
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+      }
+      close(udp_fd);
+    });
+  }
+
 public:
   NetworkAdapter()
       : server_fd(-1), client_fd(-1), is_server(false), is_connected(false) {}
 
   ~NetworkAdapter() { disconnect(); }
 
+  // Статическая функция для сканирования локальной сети клиентом
+  static std::map<std::string, int>
+  discoverLocalServers(int timeout_ms = 2000) {
+    std::map<std::string, int> servers;
+    int udp_fd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (udp_fd < 0)
+      return servers;
+
+    int reuse = 1;
+    setsockopt(udp_fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
+    sockaddr_in recv_addr{};
+    recv_addr.sin_family = AF_INET;
+    recv_addr.sin_port = htons(14889);
+    recv_addr.sin_addr.s_addr = INADDR_ANY;
+    bind(udp_fd, (struct sockaddr *)&recv_addr, sizeof(recv_addr));
+
+    struct timeval tv;
+    tv.tv_sec = timeout_ms / 1000;
+    tv.tv_usec = (timeout_ms % 1000) * 1000;
+    setsockopt(udp_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+
+    auto start = std::chrono::steady_clock::now();
+    char buffer[128];
+    while (std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::steady_clock::now() - start)
+               .count() < timeout_ms) {
+      sockaddr_in sender_addr{};
+      socklen_t addr_len = sizeof(sender_addr);
+      ssize_t len = recvfrom(udp_fd, buffer, sizeof(buffer) - 1, 0,
+                             (struct sockaddr *)&sender_addr, &addr_len);
+      if (len > 0) {
+        buffer[len] = '\0';
+        std::string msg(buffer);
+        if (msg.find("CHESS_SERVER_V1:") == 0) {
+          std::string ip = inet_ntoa(sender_addr.sin_addr);
+          int p = std::stoi(msg.substr(16));
+          servers[ip] = p; // Добавляем найденный сервер в список
+        }
+      }
+    }
+    close(udp_fd);
+    return servers;
+  }
+
+  // Запуск сервера без блокировки (теперь работает прямо в TUI)
   bool startServer(int port) {
     is_server = true;
-
     server_fd = socket(AF_INET, SOCK_STREAM, 0);
-    if (server_fd < 0) {
-      std::cerr << "Error: Failed to create socket\n";
+    if (server_fd < 0)
       return false;
-    }
 
     int opt = 1;
     setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
@@ -58,112 +139,89 @@ public:
     address.sin_family = AF_INET;
     address.sin_addr.s_addr = INADDR_ANY;
     address.sin_port = htons(port);
-    if (bind(server_fd, (struct sockaddr *)&address, sizeof(address)) < 0) {
-      std::cerr << "Error: Bind failed\n";
+    if (bind(server_fd, (struct sockaddr *)&address, sizeof(address)) < 0)
       return false;
-    }
-
-    if (listen(server_fd, 1) < 0) {
-      std::cerr << "Error: Listen failed\n";
+    if (listen(server_fd, 1) < 0)
       return false;
-    }
 
-    std::cout << "[Network] Server started on port " << port
-              << ". Waiting for opponent...\n";
+    setNonBlocking(server_fd); // Сервер больше не вешает приложение!
+    startBroadcast(port);      // Начинаем кричать "Я ЗДЕСЬ!" в локальную сеть
+    return true;
+  }
 
+  // Новая функция для опроса подключений в цикле TUI
+  bool acceptClient() {
+    if (is_connected)
+      return true;
+    sockaddr_in address{};
     socklen_t addrlen = sizeof(address);
     client_fd = accept(server_fd, (struct sockaddr *)&address, &addrlen);
-    if (client_fd < 0) {
-      std::cerr << "Error: Accept failed\n";
-      return false;
+    if (client_fd >= 0) {
+      setNonBlocking(client_fd);
+      is_connected = true;
+      stop_broadcast = true; // Кто-то подключился, выключаем UDP-маяк
+      return true;
     }
-
-    setNonBlocking(client_fd);
-
-    is_connected = true;
-    std::cout << "[Network] Opponent connected!\n";
-    return true;
+    return false;
   }
 
   bool connectToServer(const std::string &ip, int port) {
     is_server = false;
-
     client_fd = socket(AF_INET, SOCK_STREAM, 0);
-    if (client_fd < 0) {
-      std::cerr << "Error: Failed to create socket\n";
+    if (client_fd < 0)
       return false;
-    }
-
     sockaddr_in serv_addr{};
     serv_addr.sin_family = AF_INET;
     serv_addr.sin_port = htons(port);
-
-    if (inet_pton(AF_INET, ip.c_str(), &serv_addr.sin_addr) <= 0) {
-      std::cerr << "Error: Invalid address / Address not supported\n";
+    if (inet_pton(AF_INET, ip.c_str(), &serv_addr.sin_addr) <= 0)
       return false;
-    }
 
-    std::cout << "[Network] Connecting to " << ip << ":" << port << "...\n";
     if (connect(client_fd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) <
-        0) {
-      std::cerr << "Error: Connection failed\n";
+        0)
       return false;
-    }
-
     setNonBlocking(client_fd);
-
     is_connected = true;
-    std::cout << "[Network] Successfully connected to server!\n";
     return true;
   }
 
   bool sendMove(const std::string &move) {
     if (!is_connected)
       return false;
-
     std::string packet = move + "\n";
-    ssize_t bytes_sent = send(client_fd, packet.c_str(), packet.length(), 0);
-
-    return bytes_sent > 0;
+    return send(client_fd, packet.c_str(), packet.length(), 0) > 0;
   }
 
   bool tryReadMove(std::string &move) {
     if (!is_connected)
       return false;
-
     char buffer[128];
     ssize_t bytes_read = recv(client_fd, buffer, sizeof(buffer), 0);
-
     if (bytes_read > 0) {
       receive_buffer.append(buffer, static_cast<size_t>(bytes_read));
     } else if (bytes_read == 0) {
-      // Соперник отключился (EOF сокета)
       is_connected = false;
       move = "DISCONNECT";
       return true;
     } else if (errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR) {
-      std::cerr << "Error: recv failed: " << std::strerror(errno) << "\n";
       is_connected = false;
       move = "DISCONNECT";
       return true;
     }
-
-    // Ищем конец строки
     size_t pos = receive_buffer.find('\n');
     if (pos != std::string::npos) {
       move = receive_buffer.substr(0, pos);
       receive_buffer.erase(0, pos + 1);
       return true;
     }
-
-    // Если bytes_read < 0 и errno == EAGAIN, это значит, что данных в сети
-    // просто еще нет
     return false;
   }
 
   bool isConnected() const { return is_connected; }
 
   void disconnect() {
+    stop_broadcast = true;
+    if (broadcast_thread.joinable())
+      broadcast_thread.join();
     if (client_fd != -1) {
       close(client_fd);
       client_fd = -1;
@@ -173,13 +231,6 @@ public:
       server_fd = -1;
     }
     is_connected = false;
-  }
-
-private:
-  // Перевод дескриптора сокета в неблокирующий режим через fcntl
-  void setNonBlocking(int fd) {
-    int flags = fcntl(fd, F_GETFL, 0);
-    fcntl(fd, F_SETFL, flags | O_NONBLOCK);
   }
 };
 

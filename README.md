@@ -90,9 +90,7 @@ To skip the interactive menus and establish a direct connection from the termina
 
 * **Start Host (Plays White):**
   ```bash
-  ./chess-tui -S -P 14888
-
-```
+  ./chess-tui -S -P 14888```
 
 * **Connect to Host (Plays Black):**
 ```bash

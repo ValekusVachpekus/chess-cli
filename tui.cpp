@@ -228,7 +228,7 @@ void printHelp() {
 }
 
 void printVersion() {
-  cout << "chess-tui version 1.1.0\n"
+  cout << "chess-tui version 1.3.0\n"
        << "Copyright (C) 2026 Ilia Shchetkov\n"
        << "License GPLv3+: GNU GPL version 3 or later "
           "<https://gnu.org/licenses/gpl.html>.\n"

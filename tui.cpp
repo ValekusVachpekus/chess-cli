@@ -343,18 +343,8 @@ int main(int argc, char **argv) {
   NetworkAdapter netAdapter;
   bool networkEnabled = false;
   char mode = 'h';
-  if (isServer) {
-    if (netAdapter.startServer(port)) {
-      networkEnabled = true;
-      mode = 'n'; // n - marker for network
-    }
-  } else if (isClient) {
-    if (netAdapter.connectToServer(connectIp, port)) {
-      networkEnabled = true;
-      mode = 'n'; // n - marker for network
-    }
-  }
 
+  // 1. ТОЛЬКО ОДИН РАЗ ЗАПУСКАЕМ ИНТЕРФЕЙС
   setlocale(LC_ALL, "");
   initscr();
   cbreak();
@@ -368,6 +358,121 @@ int main(int argc, char **argv) {
   init_pair(COLOR_HIGHLIGHT, COLOR_GREEN, -1);
   init_pair(COLOR_CAPTURE, COLOR_RED, -1);
 
+  // 2. ВЫБОР ИКОНОК
+  if (!iconProvided) {
+    vector<string> iconOptions = {
+        "1. Nerd Font (     )",
+        "2. Classic Markdown (󰡙 󰡘 󰡜 󰡛 󰡚 󰡗)",
+        "3. ASCII Minimal (P N B R Q K)",
+        "4. FAE Font (     )"};
+    int iconIndex = promptMenu(2, "Select piece icon set:", iconOptions);
+    setIconStyle(static_cast<IconStyle>(iconIndex + 1));
+    iconProvided = true; // ВАЖНО: блокируем повторный вызов
+  } else {
+    setIconStyle(static_cast<IconStyle>(iconArg));
+  }
+
+  // 3. ГЛАВНОЕ МЕНЮ (ВЫБОР РЕЖИМА)
+  if (!modeProvided && !isServer && !isClient) {
+    vector<string> modeOptions = {
+        "1. Local: Human vs Human", "2. Local: Play vs Bot",
+        "3. Network: Create Game (Host)", "4. Network: Find Local Games (Join)",
+        "5. Replay Mode"};
+    int modeIndex = promptMenu(2, "Select game mode:", modeOptions);
+
+    if (modeIndex == 0) {
+      mode = 'h';
+    } else if (modeIndex == 1) {
+      // Подменю для игры с ботом
+      vector<string> botOptions = {"1. Bot plays Black (You play White)",
+                                   "2. Bot plays White (You play Black)",
+                                   "3. Bot vs Bot"};
+      int botIndex = promptMenu(2, "Select bot configuration:", botOptions);
+      if (botIndex == 0)
+        mode = 'w';
+      else if (botIndex == 1)
+        mode = 'b';
+      else if (botIndex == 2)
+        mode = 'a';
+    } else if (modeIndex == 2) {
+      isServer = true;
+    } else if (modeIndex == 3) {
+      isClient = true;
+    } else if (modeIndex == 4) {
+      mode = 'r';
+    }
+    modeProvided = true; // ВАЖНО: блокируем повторный вызов
+  } else if (modeProvided) {
+    // Обработка флага -m из консоли
+    if (modeArg == "white")
+      mode = 'w';
+    else if (modeArg == "black")
+      mode = 'b';
+    else if (modeArg == "auto")
+      mode = 'a';
+    else if (modeArg == "replay")
+      mode = 'r';
+    else
+      mode = 'h';
+  }
+
+  // --- ОБРАБОТКА УЛУЧШЕННОЙ СЕТИ ВНУТРИ TUI ---
+  if (isServer) {
+    if (netAdapter.startServer(port)) {
+      networkEnabled = true;
+      mode = 'n';
+      // Отрисовываем ожидание клиента в ncurses!
+      timeout(100); // Опрос каждые 100мс
+      while (!netAdapter.acceptClient()) {
+        clear();
+        mvprintw(LINES / 2, COLS / 2 - 15, "Waiting for opponent on port %d...",
+                 port);
+        mvprintw(LINES / 2 + 2, COLS / 2 - 15, "(Press 'q' to cancel)");
+        refresh();
+        int ch = getch();
+        if (ch == 'q' || ch == 'Q') {
+          endwin();
+          return 0;
+        }
+      }
+      timeout(-1); // Возвращаем блокирующий режим после подключения
+    }
+  } else if (isClient) {
+    if (connectIp.empty()) {
+      clear();
+      mvprintw(LINES / 2, COLS / 2 - 15, "Scanning for local games...");
+      refresh();
+      // Вызываем наш статический сканер сети!
+      auto servers = NetworkAdapter::discoverLocalServers(2000);
+
+      vector<string> lanOptions;
+      vector<string> ips;
+      for (auto &s : servers) {
+        lanOptions.push_back("Join " + s.first + ":" + to_string(s.second));
+        ips.push_back(s.first);
+      }
+      lanOptions.push_back("Enter IP manually...");
+
+      int choice = promptMenu(2, "Found local games:", lanOptions);
+      if (static_cast<size_t>(choice) < servers.size()) {
+        connectIp = ips[choice];
+        port = servers[connectIp];
+      } else {
+        // Запасной план: ручной ввод
+        connectIp = promptInput(10, "Enter IP: ", "127.0.0.1");
+      }
+    }
+
+    if (netAdapter.connectToServer(connectIp, port)) {
+      networkEnabled = true;
+      mode = 'n';
+    } else {
+      endwin();
+      cout << "Connection failed!" << endl;
+      return 1;
+    }
+  }
+
   Board *gameboard = new Board();
   ChessFacade game(gameboard);
   game.fillBoard();
@@ -376,50 +481,6 @@ int main(int argc, char **argv) {
   bool botEnabled = false;
   string botInfo = "Bot: OFF";
   string status = "";
-
-  if (iconProvided) {
-    setIconStyle(static_cast<IconStyle>(iconArg));
-  }
-
-  if (!networkEnabled) {
-    if (!iconProvided) {
-      vector<string> iconOptions = {
-          "1. Nerd Font (     )",
-          "2. Classic Markdown (󰡙 󰡘 󰡜 󰡛 󰡚 󰡗)",
-          "3. ASCII Minimal (P N B R Q K)",
-          "4. FAE Font (     )"};
-      int iconIndex = promptMenu(2, "Select piece icon set:", iconOptions);
-      setIconStyle(static_cast<IconStyle>(iconIndex + 1));
-    }
-    if (modeProvided) {
-      if (modeArg == "white") {
-        mode = 'w';
-      } else if (modeArg == "black") {
-        mode = 'b';
-      } else if (modeArg == "auto") {
-        mode = 'a';
-      } else if (modeArg == "replay") {
-        mode = 'r';
-      } else {
-        mode = 'h';
-      }
-    } else {
-      vector<string> modeOptions = {
-          "Human vs Human", "Bot plays White", "Bot plays Black",
-          "Bot vs Bot",     "Replay",
-      };
-      int modeIndex = promptMenu(2, "Select game mode:", modeOptions);
-      if (modeIndex == 1) {
-        mode = 'w';
-      } else if (modeIndex == 2) {
-        mode = 'b';
-      } else if (modeIndex == 3) {
-        mode = 'a';
-      } else if (modeIndex == 4) {
-        mode = 'r';
-      }
-    }
-  }
 
   if (!modeProvided && mode != 'h' && mode != 'n') {
     string mt = promptInput(11, "Bot movetime in ms [200]: ", "200");

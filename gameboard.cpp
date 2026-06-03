@@ -63,28 +63,88 @@ enum Color { BLACK, WHITE, NONE };
 
 enum Type { PAWN, HORSE, ELEPHANT, KING, QUEEN, LADYA };
 
+enum IconStyle {
+  ICON_NERD = 1,
+  ICON_UNICODE = 2,
+  ICON_ASCII = 3,
+  ICON_FAE = 4
+};
+static IconStyle gCurrentIconStyle = ICON_NERD;
+
+void setIconStyle(IconStyle style) { gCurrentIconStyle = style; }
+
 string typeToString(Type type) {
-  switch (type) {
-  case PAWN: {
-    return "";
+  if (gCurrentIconStyle == ICON_UNICODE) {
+    switch (type) { // 󰡙 󰡘 󰡜 󰡛 󰡚 󰡗
+    case PAWN:
+      return "󰡙";
+    case HORSE:
+      return "󰡘";
+    case ELEPHANT:
+      return "󰡜";
+    case KING:
+      return "󰡗";
+    case QUEEN:
+      return "󰡚";
+    case LADYA:
+      return "󰡛";
+    }
+  } else if (gCurrentIconStyle == ICON_ASCII) {
+    switch (type) {
+    case PAWN:
+      return "P";
+    case HORSE:
+      return "N";
+    case ELEPHANT:
+      return "B";
+    case KING:
+      return "K";
+    case QUEEN:
+      return "Q";
+    case LADYA:
+      return "R";
+    }
+  } else if (gCurrentIconStyle == ICON_FAE) {
+    switch (type) { // 
+    case PAWN:
+      return "";
+    case HORSE:
+      return "";
+    case ELEPHANT:
+      return "";
+    case KING:
+      return "";
+    case QUEEN:
+      return "";
+    case LADYA:
+      return "";
+    }
+  } else {
+    switch (type) {
+    case PAWN:
+      return "";
+    case HORSE:
+      return "";
+    case ELEPHANT:
+      return "";
+    case KING:
+      return "";
+    case QUEEN:
+      return "";
+    case LADYA:
+      return "";
+    }
   }
-  case HORSE: {
-    return "";
+  return "?";
+}
+
+string getCornerIcon() {
+  if (gCurrentIconStyle == ICON_UNICODE) {
+    return "└";
+  } else if (gCurrentIconStyle == ICON_ASCII) {
+    return "+";
   }
-  case ELEPHANT: {
-    return "";
-  }
-  case KING: {
-    return "";
-  }
-  case QUEEN: {
-    return "";
-  }
-  case LADYA: {
-    return "";
-  }
-  }
-  return "";
+  return "";
 }
 
 typedef Type (*PromotionSelector)(Color);
@@ -491,7 +551,7 @@ public:
       }
       cout << endl;
     }
-    cout << "| A B C D E F G H" << endl;
+    cout << getCornerIcon() << "| A B C D E F G H" << endl;
   }
 };
 

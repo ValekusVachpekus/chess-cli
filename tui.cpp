@@ -97,9 +97,11 @@ void drawBoard(ChessFacade &game, int cursorX, int cursorY,
     }
   }
   if (flipped) {
-    mvprintw(offsetY + 9, offsetX, "| H G F E D C B A");
+    mvprintw(offsetY + 9, offsetX, "%s| H G F E D C B A",
+             getCornerIcon().c_str());
   } else {
-    mvprintw(offsetY + 9, offsetX, "| A B C D E F G H");
+    mvprintw(offsetY + 9, offsetX, "%s| A B C D E F G H",
+             getCornerIcon().c_str());
   }
   if (!hideUI) {
     mvprintw(offsetY + 11, offsetX, "Turn: %s",
@@ -213,6 +215,8 @@ void printHelp() {
       << "Options:\n"
       << "  -m, --mode <mode>    Game mode: human, white, black, auto, replay\n"
       << "  -t, --time <ms>      Bot movetime in milliseconds (default: 200)\n"
+      << "  -i, --icons <1|2|3|4>  Icon set (1: Nerd, 2: Markdown, 3: ASCII, "
+         "4: Fae)\n"
       << "  -f, --flip           Flip board at start (black on bottom)\n"
       << "  -c, --center         Center board in terminal\n"
       << "  -H, --hide-ui        Hide UI text (show only board)\n"
@@ -241,6 +245,8 @@ int main(int argc, char **argv) {
   bool startCentered = false;
   bool startHiddenUI = false;
   bool autoPlay = false;
+  int iconArg = 1;
+  bool iconProvided = false;
 
   // For network_adapter
   bool isServer = false;
@@ -251,6 +257,7 @@ int main(int argc, char **argv) {
   static struct option long_options[] = {
       {"mode", required_argument, nullptr, 'm'},
       {"time", required_argument, nullptr, 't'},
+      {"icons", required_argument, nullptr, 'i'},   // <-- ДОБАВИТЬ ЭТО
       {"server", no_argument, nullptr, 'S'},        // <-- ДОБАВИТЬ
       {"connect", required_argument, nullptr, 'C'}, // <-- ДОБАВИТЬ
       {"port", required_argument, nullptr, 'P'},    // <-- ДОБАВИТЬ
@@ -263,7 +270,7 @@ int main(int argc, char **argv) {
 
   int opt;
   int option_index = 0;
-  while ((opt = getopt_long(argc, argv, "m:t:SC:P:fcHhv", long_options,
+  while ((opt = getopt_long(argc, argv, "m:t:i:SC:P:fcHhv", long_options,
                             &option_index)) != -1) {
     switch (opt) {
     case 'm':
@@ -288,6 +295,20 @@ int main(int argc, char **argv) {
         return 1;
       }
       timeProvided = true;
+      break;
+    case 'i':
+      try {
+        iconArg = stoi(optarg);
+        if (iconArg >= 1 && iconArg <= 4) {
+          iconProvided = true;
+        } else {
+          cerr << "Error: icons must be 1, 2, 3 or 4.\n";
+          return 1;
+        }
+      } catch (...) {
+        cerr << "Error: invalid icons argument.\n";
+        return 1;
+      }
       break;
     case 'f':
       startFlipped = true;
@@ -356,7 +377,20 @@ int main(int argc, char **argv) {
   string botInfo = "Bot: OFF";
   string status = "";
 
+  if (iconProvided) {
+    setIconStyle(static_cast<IconStyle>(iconArg));
+  }
+
   if (!networkEnabled) {
+    if (!iconProvided) {
+      vector<string> iconOptions = {
+          "1. Nerd Font (     )",
+          "2. Classic Markdown (󰡙 󰡘 󰡜 󰡛 󰡚 󰡗)",
+          "3. ASCII Minimal (P N B R Q K)",
+          "4. FAE Font (     )"};
+      int iconIndex = promptMenu(2, "Select piece icon set:", iconOptions);
+      setIconStyle(static_cast<IconStyle>(iconIndex + 1));
+    }
     if (modeProvided) {
       if (modeArg == "white") {
         mode = 'w';

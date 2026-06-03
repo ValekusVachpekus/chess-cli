@@ -71,14 +71,39 @@ When game is launched without CLI arguments, there are 4 game modes available vi
 * a - bot vs bot
 Also you can chose movetime (default 200ms). More movetime makes bot smarter.
 
-## Multiplayer mode
+## Multiplayer Mode
 
-Game supports local multiplayer via UCI.
-1. Start server (Plays White):
-`chess-tui -m human -S`
+The game supports automatic local network match discovery (LAN Discovery via UDP Broadcast) as well as direct TCP connections.
 
-2. Connect to a server (Plays Black):
-`chess-tui -m human -C <IP (default 127.0.0.1)> -P <Port (default 8888)>`
+### 1. LAN Discovery (Automatic)
+Use this mode if both devices are on the same local network, a mobile hotspot, or a shared virtual LAN (e.g., Tailscale or ZeroTier):
+
+1. **Host (Plays White):** Launch the game, pick an icon set, and select `3. Network: Create Game (Host)` from the main menu. The app will display a waiting status and start broadcasting discovery beacons in the background.
+2. **Client (Plays Black):** Launch the game, pick an icon set, and select `4. Network: Find Local Games (Join)` from the main menu. The scanner will look for active hosts on the network and show them in a dynamic list. Press **Enter** on the discovered host to connect instantly.
+
+<img width="303" height="175" alt="image" src="https://github.com/user-attachments/assets/240e813f-1119-42e9-930b-8a360b4a4f24" />
+
+---
+
+### 2. Manual Connection (CLI Flags)
+To skip the interactive menus and establish a direct connection from the terminal:
+
+* **Start Host (Plays White):**
+  ```bash
+  ./chess-tui -S -P 14888
+
+```
+
+* **Connect to Host (Plays Black):**
+```bash
+./chess-tui -C <IP_ADDRESS> -P 14888
+
+```
+
+
+
+<img width="1920" height="480" alt="image" src="https://github.com/user-attachments/assets/b5f63487-420f-43e8-a7ce-addaae2216c9" />
+
 
 ## Replay mode
 

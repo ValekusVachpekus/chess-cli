@@ -60,15 +60,24 @@ private:
       setsockopt(udp_fd, SOL_SOCKET, SO_BROADCAST, &broadcastEnable,
                  sizeof(broadcastEnable));
 
-      sockaddr_in broadcast_addr{};
-      broadcast_addr.sin_family = AF_INET;
-      broadcast_addr.sin_port = htons(14889); // Отдельный порт для поиска
-      broadcast_addr.sin_addr.s_addr = inet_addr("255.255.255.255");
-
       std::string msg = "CHESS_SERVER_V1:" + std::to_string(port);
       while (!stop_broadcast) {
-        sendto(udp_fd, msg.c_str(), msg.length(), 0,
-               (struct sockaddr *)&broadcast_addr, sizeof(broadcast_addr));
+        // 1. Вещание для реальной локальной сети / Хотспота
+        sockaddr_in b_addr{};
+        b_addr.sin_family = AF_INET;
+        b_addr.sin_port = htons(14889);
+        b_addr.sin_addr.s_addr = inet_addr("255.255.255.255");
+        sendto(udp_fd, msg.c_str(), msg.length(), 0, (struct sockaddr *)&b_addr,
+               sizeof(b_addr));
+
+        // 2. Вещание для локальных тестов на одном компьютере (localhost)
+        sockaddr_in l_addr{};
+        l_addr.sin_family = AF_INET;
+        l_addr.sin_port = htons(14889);
+        l_addr.sin_addr.s_addr = inet_addr("127.255.255.255");
+        sendto(udp_fd, msg.c_str(), msg.length(), 0, (struct sockaddr *)&l_addr,
+               sizeof(l_addr));
+
         std::this_thread::sleep_for(std::chrono::seconds(1));
       }
       close(udp_fd);

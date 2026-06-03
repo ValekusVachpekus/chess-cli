@@ -343,18 +343,8 @@ int main(int argc, char **argv) {
   NetworkAdapter netAdapter;
   bool networkEnabled = false;
   char mode = 'h';
-  if (isServer) {
-    if (netAdapter.startServer(port)) {
-      networkEnabled = true;
-      mode = 'n'; // n - marker for network
-    }
-  } else if (isClient) {
-    if (netAdapter.connectToServer(connectIp, port)) {
-      networkEnabled = true;
-      mode = 'n'; // n - marker for network
-    }
-  }
 
+  // 1. ТОЛЬКО ОДИН РАЗ ЗАПУСКАЕМ ИНТЕРФЕЙС
   setlocale(LC_ALL, "");
   initscr();
   cbreak();
@@ -368,49 +358,62 @@ int main(int argc, char **argv) {
   init_pair(COLOR_HIGHLIGHT, COLOR_GREEN, -1);
   init_pair(COLOR_CAPTURE, COLOR_RED, -1);
 
-  setlocale(LC_ALL, "");
-  initscr();
-  cbreak();
-  noecho();
-  keypad(stdscr, TRUE);
-  curs_set(0);
-  start_color();
-  use_default_colors();
-  init_pair(COLOR_WHITE_PIECE, COLOR_BLUE, -1);
-  init_pair(COLOR_BLACK_PIECE, COLOR_YELLOW, -1);
-  init_pair(COLOR_HIGHLIGHT, COLOR_GREEN, -1);
-  init_pair(COLOR_CAPTURE, COLOR_RED, -1);
-
-  if (iconProvided) {
+  // 2. ВЫБОР ИКОНОК
+  if (!iconProvided) {
+    vector<string> iconOptions = {
+        "1. Nerd Font (     )",
+        "2. Classic Markdown (󰡙 󰡘 󰡜 󰡛 󰡚 󰡗)",
+        "3. ASCII Minimal (P N B R Q K)",
+        "4. FAE Font (     )"};
+    int iconIndex = promptMenu(2, "Select piece icon set:", iconOptions);
+    setIconStyle(static_cast<IconStyle>(iconIndex + 1));
+    iconProvided = true; // ВАЖНО: блокируем повторный вызов
+  } else {
     setIconStyle(static_cast<IconStyle>(iconArg));
   }
 
-  // Если не переданы флаги -m, -S или -C, показываем красивое ГЛАВНОЕ МЕНЮ
+  // 3. ГЛАВНОЕ МЕНЮ (ВЫБОР РЕЖИМА)
   if (!modeProvided && !isServer && !isClient) {
-    if (!iconProvided) {
-      vector<string> iconOptions = {"1. Nerd Font", "2. Classic Markdown",
-                                    "3. ASCII Minimal", "4. FAE Font"};
-      int iconIndex = promptMenu(2, "Select piece icon set:", iconOptions);
-      setIconStyle(static_cast<IconStyle>(iconIndex + 1));
-    }
-
     vector<string> modeOptions = {
         "1. Local: Human vs Human", "2. Local: Play vs Bot",
         "3. Network: Create Game (Host)", "4. Network: Find Local Games (Join)",
         "5. Replay Mode"};
     int modeIndex = promptMenu(2, "Select game mode:", modeOptions);
+
     if (modeIndex == 0) {
       mode = 'h';
     } else if (modeIndex == 1) {
-      mode = 'w';
-    } // Для простоты сразу играем за белых против бота
-    else if (modeIndex == 2) {
+      // Подменю для игры с ботом
+      vector<string> botOptions = {"1. Bot plays Black (You play White)",
+                                   "2. Bot plays White (You play Black)",
+                                   "3. Bot vs Bot"};
+      int botIndex = promptMenu(2, "Select bot configuration:", botOptions);
+      if (botIndex == 0)
+        mode = 'w';
+      else if (botIndex == 1)
+        mode = 'b';
+      else if (botIndex == 2)
+        mode = 'a';
+    } else if (modeIndex == 2) {
       isServer = true;
     } else if (modeIndex == 3) {
       isClient = true;
     } else if (modeIndex == 4) {
       mode = 'r';
     }
+    modeProvided = true; // ВАЖНО: блокируем повторный вызов
+  } else if (modeProvided) {
+    // Обработка флага -m из консоли
+    if (modeArg == "white")
+      mode = 'w';
+    else if (modeArg == "black")
+      mode = 'b';
+    else if (modeArg == "auto")
+      mode = 'a';
+    else if (modeArg == "replay")
+      mode = 'r';
+    else
+      mode = 'h';
   }
 
   // --- ОБРАБОТКА УЛУЧШЕННОЙ СЕТИ ВНУТРИ TUI ---
@@ -478,50 +481,6 @@ int main(int argc, char **argv) {
   bool botEnabled = false;
   string botInfo = "Bot: OFF";
   string status = "";
-
-  if (iconProvided) {
-    setIconStyle(static_cast<IconStyle>(iconArg));
-  }
-
-  if (!networkEnabled) {
-    if (!iconProvided) {
-      vector<string> iconOptions = {
-          "1. Nerd Font (     )",
-          "2. Classic Markdown (󰡙 󰡘 󰡜 󰡛 󰡚 󰡗)",
-          "3. ASCII Minimal (P N B R Q K)",
-          "4. FAE Font (     )"};
-      int iconIndex = promptMenu(2, "Select piece icon set:", iconOptions);
-      setIconStyle(static_cast<IconStyle>(iconIndex + 1));
-    }
-    if (modeProvided) {
-      if (modeArg == "white") {
-        mode = 'w';
-      } else if (modeArg == "black") {
-        mode = 'b';
-      } else if (modeArg == "auto") {
-        mode = 'a';
-      } else if (modeArg == "replay") {
-        mode = 'r';
-      } else {
-        mode = 'h';
-      }
-    } else {
-      vector<string> modeOptions = {
-          "Human vs Human", "Bot plays White", "Bot plays Black",
-          "Bot vs Bot",     "Replay",
-      };
-      int modeIndex = promptMenu(2, "Select game mode:", modeOptions);
-      if (modeIndex == 1) {
-        mode = 'w';
-      } else if (modeIndex == 2) {
-        mode = 'b';
-      } else if (modeIndex == 3) {
-        mode = 'a';
-      } else if (modeIndex == 4) {
-        mode = 'r';
-      }
-    }
-  }
 
   if (!modeProvided && mode != 'h' && mode != 'n') {
     string mt = promptInput(11, "Bot movetime in ms [200]: ", "200");

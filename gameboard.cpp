@@ -171,6 +171,19 @@ Type consumePromotionOverride() {
 
 void clearPromotionOverride() { gPromotionOverrideActive = false; }
 
+// Resolve which piece type a promoting pawn becomes, honouring (in order):
+// an explicit override (UCI/network/replay), an interactive selector (TUI),
+// else Queen by default.
+Type resolvePromotionType(Color color) {
+  if (gPromotionOverrideActive) {
+    return consumePromotionOverride();
+  }
+  if (gPromotionSelector != nullptr) {
+    return gPromotionSelector(color);
+  }
+  return QUEEN;
+}
+
 class IFigure;
 
 const string ANSI_RESET = "\033[0m";
@@ -210,8 +223,6 @@ string figureToString(const IFigure *figure) {
   return symbol;
 }
 
-#include "fen_converter.h"
-
 class Figure;
 
 class IBoard {
@@ -237,8 +248,8 @@ protected:
 public:
   Figure(int id, Color color, IBoard *gameboard, int cost,
          Coordinates coordinates, Type type)
-      : id(id), color(color), gameboard(gameboard), cost(cost),
-        coordinates(coordinates), type(type) {
+      : id(id), gameboard(gameboard), cost(cost), coordinates(coordinates),
+        color(color), type(type) {
     if (coordinates.getX() >= 0 && coordinates.getX() <= 7 &&
         coordinates.getY() >= 0 && coordinates.getY() <= 7) {
     } else {
@@ -614,27 +625,16 @@ public:
     return validMoves;
   }
 
+  // Promotion is intentionally NOT handled here: replacing the pawn would
+  // delete `this` while we are still inside its own method (use-after-free).
+  // ChessFacade::moveFigure performs the promotion after move() returns.
   bool move(const Coordinates &coordinates) override {
     bool moved = Figure::move(coordinates);
     if (moved) {
       canDoubleMove = false;
     }
-    if (coordinates.getY() == 0 || coordinates.getY() == 7) {
-      prevrashenie(typeSelector());
-    }
     return moved;
   }
-
-  Type typeSelector() {
-    if (gPromotionOverrideActive) {
-      return consumePromotionOverride();
-    }
-    if (gPromotionSelector != nullptr) {
-      return gPromotionSelector(this->getColor());
-    }
-    return QUEEN;
-  }
-  void prevrashenie(Type type);
 };
 
 class OrthogonalMoving {
@@ -846,37 +846,6 @@ public:
   }
 };
 
-void Pawn::prevrashenie(Type type) {
-  Coordinates pos = this->getCoordinates();
-  Figure *newFigure = nullptr;
-  switch (type) {
-  case QUEEN:
-    newFigure =
-        new Queen(this->getId(), this->getColor(), this->getGameboard(), pos);
-    break;
-  case ELEPHANT:
-    newFigure = new Elephant(this->getId(), this->getColor(),
-                             this->getGameboard(), pos);
-    break;
-  case LADYA:
-    newFigure =
-        new Ladya(this->getId(), this->getColor(), this->getGameboard(), pos);
-    break;
-  case HORSE:
-    newFigure =
-        new Horse(this->getId(), this->getColor(), this->getGameboard(), pos);
-    break;
-  default:
-    newFigure =
-        new Queen(this->getId(), this->getColor(), this->getGameboard(), pos);
-    break;
-  }
-
-  this->getGameboard()->setFigure(newFigure);
-  // Commented out because of seg error when online mode.
-  // delete this;
-}
-
 class King : public Figure {
 private:
   bool hadMoved = false;
@@ -973,9 +942,15 @@ public:
         Coordinates(x, y - 1),     Coordinates(x - 1, y),
         Coordinates(x - 1, y - 1), Coordinates(x - 1, y + 1)};
 
+    // Return pseudo-legal single steps. We deliberately do NOT filter by
+    // isSquareUnderAttack here: that check is unreliable for the king (it does
+    // not account for the king itself blocking an attacker's ray, nor for
+    // captures of defended pieces). Full legality is enforced by
+    // ChessFacade::getLegalMovesFor, which actually makes the move and tests
+    // for check. Castling, however, requires explicit attack checks below.
     for (auto move : moves) {
       if (move.getX() >= 0 && move.getX() <= 7 && move.getY() >= 0 &&
-          move.getY() <= 7 && !isSquareUnderAttack(move)) {
+          move.getY() <= 7) {
         IFigure *target = this->getGameboard()->getFigure(move);
         if (target == nullptr || target->getColor() != this->getColor()) {
           validMoves.push_back(move);
@@ -1097,12 +1072,40 @@ private:
     return cmd;
   }
 
-  // Извлечение идентификатора позиции (первые 4 поля FEN)
+  // Может ли сторона, чей ход сейчас, реально взять на проходе. По правилам
+  // ФИДЕ позиция считается повторённой только при совпадении прав на взятие на
+  // проходе, причём поле учитывается лишь когда взятие действительно возможно.
+  bool enPassantCapturable() const {
+    Coordinates target = gameboard->getEnPassantTarget();
+    if (!target.canMove()) {
+      return false;
+    }
+    int dir = (currentTurn == WHITE) ? 1 : -1;
+    int pawnY = target.getY() - dir;
+    for (int dx = -1; dx <= 1; dx += 2) {
+      Coordinates c(target.getX() + dx, pawnY);
+      if (!c.canMove()) {
+        continue;
+      }
+      IFigure *p = gameboard->getFigure(c);
+      if (p != nullptr && p->getType() == PAWN && p->getColor() == currentTurn) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  // Извлечение идентификатора позиции (первые 4 поля FEN). Поле взятия на
+  // проходе нормализуется до '-', если взятие фактически невозможно, иначе
+  // одинаковые позиции считались бы разными и троекратное повторение терялось.
   string getPositionKey() const {
     string fen = getFEN();
     stringstream ss(fen);
     string pieces, turnField, castling, enPassant;
     ss >> pieces >> turnField >> castling >> enPassant;
+    if (!enPassantCapturable()) {
+      enPassant = "-";
+    }
     return pieces + " " + turnField + " " + castling + " " + enPassant;
   }
 
@@ -1447,14 +1450,38 @@ public:
         (targetBefore != nullptr) ? targetBefore->getColor() : NONE;
     for (auto var : getLegalMovesForSelected()) {
       if (var.equals(coordinates)) {
+        bool isCapture = (targetBefore != nullptr);
         bool moved = selected->move(coordinates);
         if (moved) {
 
-          if (movingType == PAWN) {
-            IFigure *newPiece = gameboard->getFigure(coordinates);
-            if (newPiece != nullptr && newPiece->getType() != PAWN) {
-              selected = newPiece;
+          // Promotion is handled here (not inside Pawn::move) so the old pawn
+          // is only deleted once this method no longer touches it.
+          if (movingType == PAWN &&
+              (coordinates.getY() == 0 || coordinates.getY() == 7)) {
+            int pawnId = selected->getId();
+            Type promo = resolvePromotionType(movingColor);
+            Figure *promoted = nullptr;
+            switch (promo) {
+            case ELEPHANT:
+              promoted = new Elephant(pawnId, movingColor, gameboard,
+                                      coordinates);
+              break;
+            case LADYA:
+              promoted =
+                  new Ladya(pawnId, movingColor, gameboard, coordinates);
+              break;
+            case HORSE:
+              promoted =
+                  new Horse(pawnId, movingColor, gameboard, coordinates);
+              break;
+            case QUEEN:
+            default:
+              promoted =
+                  new Queen(pawnId, movingColor, gameboard, coordinates);
+              break;
             }
+            gameboard->setFigure(promoted); // deletes the old pawn
+            selected = promoted;
           }
 
           char fX = 'a' + from.getX();
@@ -1529,12 +1556,25 @@ public:
               }
             }
           }
+          // Halfmove clock: reset on a pawn move or any capture (covers en
+          // passant, since that is also a pawn move), otherwise increment.
+          if (movingType == PAWN || isCapture) {
+            halfmoveClockCount = 0;
+          } else {
+            halfmoveClockCount++;
+          }
+
           currentTurn = (currentTurn == WHITE) ? BLACK : WHITE;
           if (currentTurn == WHITE) {
             fullmoveNumber++;
           }
 
           reportCheck();
+
+          if (!gameOver && halfmoveClockCount >= 100) {
+            lastMessage = "Draw by Fifty-move Rule";
+            gameOver = true;
+          }
 
           if (!gameOver) {
             string key = getPositionKey();
@@ -1682,8 +1722,8 @@ public:
 
 #ifndef CHESSGAME_NO_MAIN
 int main() {
-  Board *gameboard = new Board();
-  ChessFacade chessGame = ChessFacade(gameboard);
+  auto gameboard = make_unique<Board>();
+  ChessFacade chessGame = ChessFacade(gameboard.get());
   chessGame.fillBoard();
   gameboard->display();
 

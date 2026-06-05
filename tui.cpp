@@ -43,8 +43,9 @@ bool isMoveInList(const vector<Coordinates> &moves, int x, int y) {
 void drawBoard(ChessFacade &game, int cursorX, int cursorY,
                const vector<Coordinates> &validMoves, const string &status,
                const string &botInfo, Color turn, bool flipped, bool flipOnTurn,
-               bool centerBoard, bool hideUI, string gameMode = "white",
-               NetworkAdapter *netAdapter = nullptr) {
+               bool centerBoard, bool hideUI,
+               [[maybe_unused]] string gameMode = "white",
+               [[maybe_unused]] NetworkAdapter *netAdapter = nullptr) {
   clear();
   int rows = 0, cols = 0;
   getmaxyx(stdscr, rows, cols);
@@ -222,7 +223,7 @@ void printHelp() {
       << "  -H, --hide-ui        Hide UI text (show only board)\n"
       << "  -S, --server         Start as server (plays White)\n"
       << "  -C, --connect <IP>   Connect to a server (plays Black)\n"
-      << "  -P, --port <port>    Network port (default: 8888)\n"
+      << "  -P, --port <port>    Network port (default: 14888)\n"
       << "  -h, --help           Show this help\n"
       << "  -v, --version        Show version\n";
 }
@@ -239,7 +240,6 @@ void printVersion() {
 int main(int argc, char **argv) {
   string modeArg;
   bool modeProvided = false;
-  bool timeProvided = false;
   int moveTimeMs = 200;
   bool startFlipped = false;
   bool startCentered = false;
@@ -252,7 +252,7 @@ int main(int argc, char **argv) {
   bool isServer = false;
   bool isClient = false;
   string connectIp = "";
-  int port = 8888;
+  int port = 14888;
 
   static struct option long_options[] = {
       {"mode", required_argument, nullptr, 'm'},
@@ -294,7 +294,6 @@ int main(int argc, char **argv) {
         cerr << "Error: time must be > 0.\n";
         return 1;
       }
-      timeProvided = true;
       break;
     case 'i':
       try {

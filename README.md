@@ -11,9 +11,9 @@ Using: `./gameboard`. \
 Compilation: `g++ tui.cpp -lncurses -o chess-tui`. \
 Using: `./chess-tui` \
 There are hot keys of TUI version:
- - f - flip gameboard when turn
+ - f - toggle auto-flip (board flips to the side whose turn it is)
  - c - center the gameboard
- - h - hide interface
+ - i - hide interface
  - s - save game
  - o - load game
 <img width="963" height="340" alt="image" src="https://github.com/user-attachments/assets/470df939-f4be-4749-8d99-8d6dc260015d" />
@@ -41,8 +41,6 @@ The TUI version supports standard GNU/POSIX command-line arguments for quick con
     Center the board dynamically inside your terminal window.
 * `-H, --hide-ui`
     No UI mode. Hide all helper UI text, engine logs, and status bars, showing only the chess board.
-* `-m, --mode <mode>`
-    Chose game mode.
 To see more, use `chess-tui -h`.
 
 ### Generic Options

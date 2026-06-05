@@ -38,95 +38,101 @@ private:
   int stdin_fd = -1;
   int stdout_fd = -1;
   bool available = false;
+  std::string read_buffer; // Leftover bytes between readLine() calls
 
   /**
    * Write a command to Stockfish stdin
    */
-  bool writeCommand(const string &command) {
+  bool writeCommand(const std::string &command) {
     if (stdin_fd < 0) {
       return false;
     }
-    string cmd = command + "\n";
+    std::string cmd = command + "\n";
     ssize_t bytes_written = write(stdin_fd, cmd.c_str(), cmd.length());
     if (bytes_written < 0) {
-      cerr << "Failed to write to Stockfish stdin" << endl;
+      std::cerr << "Failed to write to Stockfish stdin" << std::endl;
       return false;
     }
     return true;
   }
 
   /**
-   * Read a line from Stockfish stdout
+   * Read a line from Stockfish stdout. Reads in chunks and keeps any leftover
+   * bytes in read_buffer for the next call.
    */
-  string readLine(int timeout_ms = 60000) {
+  std::string readLine(int timeout_ms = 60000) {
     if (stdout_fd < 0) {
       return "";
     }
 
-    string result;
-    char buffer[1];
-    auto start = chrono::high_resolution_clock::now();
+    auto start = std::chrono::high_resolution_clock::now();
 
     while (true) {
-      auto now = chrono::high_resolution_clock::now();
+      size_t nl = read_buffer.find('\n');
+      if (nl != std::string::npos) {
+        std::string line = read_buffer.substr(0, nl);
+        read_buffer.erase(0, nl + 1);
+        if (!line.empty() && line.back() == '\r') {
+          line.pop_back();
+        }
+        return line;
+      }
+
+      auto now = std::chrono::high_resolution_clock::now();
       auto elapsed =
-          chrono::duration_cast<chrono::milliseconds>(now - start).count();
+          std::chrono::duration_cast<std::chrono::milliseconds>(now - start)
+              .count();
       if (elapsed > timeout_ms) {
-        cerr << "Timeout reading from Stockfish" << endl;
+        std::cerr << "Timeout reading from Stockfish" << std::endl;
         return "";
       }
 
-      ssize_t bytes_read = read(stdout_fd, buffer, 1);
+      char buffer[256];
+      ssize_t bytes_read = read(stdout_fd, buffer, sizeof(buffer));
       if (bytes_read < 0) {
         if (errno == EINTR) {
           continue;
         }
-        cerr << "Error reading from Stockfish stdout" << endl;
+        std::cerr << "Error reading from Stockfish stdout" << std::endl;
         return "";
       }
       if (bytes_read == 0) {
-        cerr << "Stockfish closed the connection (EOF)" << endl;
+        std::cerr << "Stockfish closed the connection (EOF)" << std::endl;
         return "";
       }
-
-      if (buffer[0] == '\r') {
-        continue;
-      }
-      if (buffer[0] == '\n') {
-        return result;
-      }
-      result += buffer[0];
+      read_buffer.append(buffer, static_cast<size_t>(bytes_read));
     }
   }
 
   /**
    * Wait for a specific response from Stockfish
    */
-  bool waitForResponse(const string &expected, int timeout_ms = 60000) {
-    auto start = chrono::high_resolution_clock::now();
+  bool waitForResponse(const std::string &expected, int timeout_ms = 60000) {
+    auto start = std::chrono::high_resolution_clock::now();
 
     while (true) {
       if (process_pid > 0) {
         int status = 0;
         pid_t res = waitpid(process_pid, &status, WNOHANG);
         if (res == process_pid) {
-          cerr << "Stockfish process exited before responding" << endl;
+          std::cerr << "Stockfish process exited before responding" << std::endl;
           return false;
         }
       }
-      auto now = chrono::high_resolution_clock::now();
+      auto now = std::chrono::high_resolution_clock::now();
       auto elapsed =
-          chrono::duration_cast<chrono::milliseconds>(now - start).count();
+          std::chrono::duration_cast<std::chrono::milliseconds>(now - start)
+              .count();
       if (elapsed > timeout_ms) {
-        cerr << "Timeout waiting for: " << expected << endl;
+        std::cerr << "Timeout waiting for: " << expected << std::endl;
         return false;
       }
 
-      string line = readLine(timeout_ms - elapsed);
+      std::string line = readLine(timeout_ms - elapsed);
       if (line.empty()) {
         continue;
       }
-      if (line.find(expected) != string::npos) {
+      if (line.find(expected) != std::string::npos) {
         return true;
       }
     }
@@ -143,13 +149,13 @@ public:
     int stdin_pipe[2], stdout_pipe[2];
 
     if (pipe(stdin_pipe) < 0 || pipe(stdout_pipe) < 0) {
-      cerr << "Failed to create pipes" << endl;
+      std::cerr << "Failed to create pipes" << std::endl;
       return false;
     }
 
     process_pid = fork();
     if (process_pid < 0) {
-      cerr << "Failed to fork Stockfish process" << endl;
+      std::cerr << "Failed to fork Stockfish process" << std::endl;
       return false;
     }
 
@@ -169,9 +175,9 @@ public:
       } else {
         execlp("stockfish", "stockfish", nullptr);
       }
-      cerr << "Failed to exec stockfish (set STOCKFISH_PATH or install "
-              "stockfish in PATH)"
-           << endl;
+      std::cerr << "Failed to exec stockfish (set STOCKFISH_PATH or install "
+                   "stockfish in PATH)"
+                << std::endl;
       exit(1);
     }
 
@@ -182,90 +188,90 @@ public:
     stdout_fd = stdout_pipe[0];
 
     if (!writeCommand("uci")) {
-      cerr << "Failed to send uci command" << endl;
+      std::cerr << "Failed to send uci command" << std::endl;
       shutdown();
       return false;
     }
 
     if (!waitForResponse("uciok")) {
-      cerr << "Stockfish did not respond to uci command" << endl;
+      std::cerr << "Stockfish did not respond to uci command" << std::endl;
       shutdown();
       return false;
     }
 
     if (!writeCommand("isready")) {
-      cerr << "Failed to send isready command" << endl;
+      std::cerr << "Failed to send isready command" << std::endl;
       shutdown();
       return false;
     }
 
     if (!waitForResponse("readyok")) {
-      cerr << "Stockfish did not respond to isready command" << endl;
+      std::cerr << "Stockfish did not respond to isready command" << std::endl;
       shutdown();
       return false;
     }
 
     available = true;
-    cout << "Stockfish initialized successfully" << endl;
+    std::cout << "Stockfish initialized successfully" << std::endl;
     return true;
   }
 
-  string getEvaluation(const string &cmd, int movetime_ms,
-                       bool isWhiteTurn) override {
+  std::string getEvaluation(const std::string &cmd, int movetime_ms,
+                            bool isWhiteTurn) override {
     if (!available)
       return "Stockfish unavailable";
     if (!writeCommand(cmd))
       return "Failed to send position command";
-    if (!writeCommand("go movetime " + to_string(movetime_ms)))
+    if (!writeCommand("go movetime " + std::to_string(movetime_ms)))
       return "Failed to send go command";
 
-    string last_score = "0.00";
-    string best_move = "";
+    std::string last_score = "0.00";
+    std::string best_move = "";
 
     while (true) {
-      string line = readLine(movetime_ms + 1000);
+      std::string line = readLine(movetime_ms + 1000);
       if (line.empty())
         break;
 
       size_t score_pos = line.find("score ");
-      if (score_pos != string::npos) {
+      if (score_pos != std::string::npos) {
         // Парсинг оценки в пешках (centipawns)
         size_t cp_pos = line.find("cp ", score_pos);
-        if (cp_pos != string::npos) {
+        if (cp_pos != std::string::npos) {
           try {
-            int cp = stoi(line.substr(cp_pos + 3));
+            int cp = std::stoi(line.substr(cp_pos + 3));
             if (!isWhiteTurn)
               cp = -cp; // Перевод в абсолютную оценку (+ у белых, - у черных)
             double val = cp / 100.0;
-            stringstream ss;
+            std::stringstream ss;
             if (val > 0)
               ss << "+";
-            ss << fixed << setprecision(2) << val;
+            ss << std::fixed << std::setprecision(2) << val;
             last_score = ss.str();
           } catch (...) {
           }
         }
         // Парсинг матовых угроз
         size_t mate_pos = line.find("mate ", score_pos);
-        if (mate_pos != string::npos) {
+        if (mate_pos != std::string::npos) {
           try {
-            int moves = stoi(line.substr(mate_pos + 5));
+            int moves = std::stoi(line.substr(mate_pos + 5));
             if (!isWhiteTurn)
               moves = -moves;
             if (moves > 0)
-              last_score = "M" + to_string(moves);
+              last_score = "M" + std::to_string(moves);
             else
-              last_score = "-M" + to_string(abs(moves));
+              last_score = "-M" + std::to_string(std::abs(moves));
           } catch (...) {
           }
         }
       }
 
       // Ожидание финального лучшего хода для завершения цикла
-      if (line.find("bestmove") != string::npos) {
+      if (line.find("bestmove") != std::string::npos) {
         size_t move_pos = line.find("bestmove") + 9;
         size_t move_end = line.find(" ", move_pos);
-        if (move_end == string::npos)
+        if (move_end == std::string::npos)
           move_end = line.length();
         best_move = line.substr(move_pos, move_end - move_pos);
         break;
@@ -274,41 +280,41 @@ public:
     return "Evaluation: " + last_score + " | Best move: " + best_move;
   }
 
-  string getBestMove(const string &cmd, int movetime_ms) override {
+  std::string getBestMove(const std::string &cmd, int movetime_ms) override {
     if (!available) {
-      cerr << "Stockfish not available" << endl;
+      std::cerr << "Stockfish not available" << std::endl;
       return "";
     }
 
-    string pos_cmd = cmd;
+    std::string pos_cmd = cmd;
     if (!writeCommand(pos_cmd)) {
-      cerr << "Failed to send position command" << endl;
+      std::cerr << "Failed to send position command" << std::endl;
       available = false;
       return "";
     }
 
-    string go_cmd = "go movetime " + to_string(movetime_ms);
+    std::string go_cmd = "go movetime " + std::to_string(movetime_ms);
     if (!writeCommand(go_cmd)) {
-      cerr << "Failed to send go command" << endl;
+      std::cerr << "Failed to send go command" << std::endl;
       available = false;
       return "";
     }
 
     while (true) {
-      string line = readLine(movetime_ms + 1000);
+      std::string line = readLine(movetime_ms + 1000);
       if (line.empty()) {
-        cerr << "Failed to get move from Stockfish" << endl;
+        std::cerr << "Failed to get move from Stockfish" << std::endl;
         available = false;
         return "";
       }
 
-      if (line.find("bestmove") != string::npos) {
+      if (line.find("bestmove") != std::string::npos) {
         size_t move_pos = line.find("bestmove") + 9;
         size_t move_end = line.find(" ", move_pos);
-        if (move_end == string::npos) {
+        if (move_end == std::string::npos) {
           move_end = line.length();
         }
-        string move = line.substr(move_pos, move_end - move_pos);
+        std::string move = line.substr(move_pos, move_end - move_pos);
 
         return move;
       }

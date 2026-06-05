@@ -28,6 +28,7 @@
 #include <map>
 #include <netinet/in.h>
 #include <string>
+#include <sys/select.h>
 #include <sys/socket.h>
 #include <thread>
 #include <unistd.h>
@@ -100,6 +101,10 @@ public:
 
     int reuse = 1;
     setsockopt(udp_fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
+#ifdef SO_REUSEPORT
+    // Allow several clients on the same host to each receive the beacons.
+    setsockopt(udp_fd, SOL_SOCKET, SO_REUSEPORT, &reuse, sizeof(reuse));
+#endif
     sockaddr_in recv_addr{};
     recv_addr.sin_family = AF_INET;
     recv_addr.sin_port = htons(14889);
@@ -174,7 +179,8 @@ public:
     return false;
   }
 
-  bool connectToServer(const std::string &ip, int port) {
+  bool connectToServer(const std::string &ip, int port,
+                       int timeout_ms = 5000) {
     is_server = false;
     client_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (client_fd < 0)
@@ -182,13 +188,44 @@ public:
     sockaddr_in serv_addr{};
     serv_addr.sin_family = AF_INET;
     serv_addr.sin_port = htons(port);
-    if (inet_pton(AF_INET, ip.c_str(), &serv_addr.sin_addr) <= 0)
+    if (inet_pton(AF_INET, ip.c_str(), &serv_addr.sin_addr) <= 0) {
+      close(client_fd);
+      client_fd = -1;
       return false;
+    }
 
-    if (connect(client_fd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) <
-        0)
-      return false;
+    // Non-blocking connect with a timeout so a dead/unreachable host does not
+    // freeze the UI.
     setNonBlocking(client_fd);
+    int res =
+        connect(client_fd, (struct sockaddr *)&serv_addr, sizeof(serv_addr));
+    if (res < 0 && errno != EINPROGRESS) {
+      close(client_fd);
+      client_fd = -1;
+      return false;
+    }
+    if (res < 0) {
+      fd_set wset;
+      FD_ZERO(&wset);
+      FD_SET(client_fd, &wset);
+      struct timeval tv;
+      tv.tv_sec = timeout_ms / 1000;
+      tv.tv_usec = (timeout_ms % 1000) * 1000;
+      int sel = select(client_fd + 1, nullptr, &wset, nullptr, &tv);
+      if (sel <= 0) { // timeout or error
+        close(client_fd);
+        client_fd = -1;
+        return false;
+      }
+      int so_error = 0;
+      socklen_t len = sizeof(so_error);
+      if (getsockopt(client_fd, SOL_SOCKET, SO_ERROR, &so_error, &len) < 0 ||
+          so_error != 0) {
+        close(client_fd);
+        client_fd = -1;
+        return false;
+      }
+    }
     is_connected = true;
     return true;
   }
@@ -197,7 +234,31 @@ public:
     if (!is_connected)
       return false;
     std::string packet = move + "\n";
-    return send(client_fd, packet.c_str(), packet.length(), 0) > 0;
+    size_t total = 0;
+    auto start = std::chrono::steady_clock::now();
+    while (total < packet.size()) {
+      ssize_t n = send(client_fd, packet.c_str() + total, packet.size() - total,
+                       MSG_NOSIGNAL);
+      if (n > 0) {
+        total += static_cast<size_t>(n);
+        continue;
+      }
+      if (n < 0 &&
+          (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)) {
+        // Socket buffer momentarily full: retry briefly so the move is not lost.
+        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                           std::chrono::steady_clock::now() - start)
+                           .count();
+        if (elapsed > 1000) {
+          return false;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        continue;
+      }
+      is_connected = false;
+      return false;
+    }
+    return true;
   }
 
   bool tryReadMove(std::string &move) {

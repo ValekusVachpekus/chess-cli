@@ -20,8 +20,6 @@
 
 #include <string>
 
-using namespace std;
-
 class ChessEngine {
 public:
   virtual ~ChessEngine() = default;
@@ -32,15 +30,15 @@ public:
    * @param movetime_ms Maximum thinking time in milliseconds
    * @return Best move in UCI format (e.g., "e2e4")
    */
-  virtual string getBestMove(const string &fen, int movetime_ms) = 0;
+  virtual std::string getBestMove(const std::string &fen, int movetime_ms) = 0;
 
   /**
    * Check if the engine is available/ready to play
    * @return true if engine is ready, false if unavailable or crashed
    */
   virtual bool isAvailable() = 0;
-  virtual string getEvaluation(const string &cmd, int movetime_ms,
-                               bool isWhiteTurn) {
+  virtual std::string getEvaluation(const std::string & /*cmd*/,
+                                    int /*movetime_ms*/, bool /*isWhiteTurn*/) {
     return "";
   }
 

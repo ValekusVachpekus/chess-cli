@@ -7,7 +7,7 @@ Using: `./gameboard`. \
 
 
 ## TUI version
-`tui.cpp` is a TUI version of game. Controls are arrows or VIM keys. It also can rotate board depending on player's side. \
+`tui.cpp` is a TUI version of game. Controls are arrows or VIM-keys. It also can rotate board depending on player's side. \
 Compilation: `g++ tui.cpp -lncurses -o chess-tui`. \
 Using: `./chess-tui` \
 There are hot keys of TUI version:

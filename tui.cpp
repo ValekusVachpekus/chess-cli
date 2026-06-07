@@ -420,13 +420,25 @@ int main(int argc, char **argv) {
     if (netAdapter.startServer(port)) {
       networkEnabled = true;
       mode = 'n';
+      // Заранее собираем локальные IP, чтобы показать сопернику.
+      vector<string> localIPs = NetworkAdapter::getLocalIPv4();
       // Отрисовываем ожидание клиента в ncurses!
       timeout(100); // Опрос каждые 100мс
       while (!netAdapter.acceptClient()) {
         clear();
-        mvprintw(LINES / 2, COLS / 2 - 15, "Waiting for opponent on port %d...",
+        int row = LINES / 2 - 2 - static_cast<int>(localIPs.size());
+        mvprintw(row, COLS / 2 - 15, "Waiting for opponent on port %d...",
                  port);
-        mvprintw(LINES / 2 + 2, COLS / 2 - 15, "(Press 'q' to cancel)");
+        row += 2;
+        if (localIPs.empty()) {
+          mvprintw(row++, COLS / 2 - 15, "Your IP: (not detected)");
+        } else {
+          mvprintw(row++, COLS / 2 - 15, "Tell the other player to connect to:");
+          for (const auto &ip : localIPs)
+            mvprintw(row++, COLS / 2 - 15, "   %s -P %d", ip.c_str(), port);
+        }
+        row += 1;
+        mvprintw(row, COLS / 2 - 15, "(Press 'q' to cancel)");
         refresh();
         int ch = getch();
         if (ch == 'q' || ch == 'Q') {

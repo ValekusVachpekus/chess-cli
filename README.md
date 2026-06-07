@@ -79,22 +79,30 @@ Use this mode if both devices are on the same local network, a mobile hotspot, o
 1. **Host (Plays White):** Launch the game, pick an icon set, and select `3. Network: Create Game (Host)` from the main menu. The app will display a waiting status and start broadcasting discovery beacons in the background.
 2. **Client (Plays Black):** Launch the game, pick an icon set, and select `4. Network: Find Local Games (Join)` from the main menu. The scanner will look for active hosts on the network and show them in a dynamic list. Press **Enter** on the discovered host to connect instantly.
 
+> **If discovery finds nothing** while both devices are on the same Wi-Fi, the
+> router is most likely blocking UDP broadcasts (AP/Client Isolation, common on
+> guest and public networks), or a firewall is dropping the traffic. Use the
+> manual connection below — the host screen now prints its IP address(es) and
+> port for you to type in.
+
 <img width="303" height="175" alt="image" src="https://github.com/user-attachments/assets/240e813f-1119-42e9-930b-8a360b4a4f24" />
 
 ---
 
 ### 2. Manual Connection (CLI Flags)
-To skip the interactive menus and establish a direct connection from the terminal:
+To skip the interactive menus and establish a direct connection from the terminal.
+The host's waiting screen shows the exact `IP -P PORT` to enter. **Use the same
+`-P` port on both sides** (the default in code is `8888`):
 
 * **Start Host (Plays White):**
   ```bash
-  ./chess-tui -S -P 14888```
+  ./chess-tui -S -P 8888
+  ```
 
 * **Connect to Host (Plays Black):**
-```bash
-./chess-tui -C <IP_ADDRESS> -P 14888
-
-```
+  ```bash
+  ./chess-tui -C <IP_ADDRESS> -P 8888
+  ```
 
 
 

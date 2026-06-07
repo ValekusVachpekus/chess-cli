@@ -24,14 +24,17 @@
 #include <chrono>
 #include <cstring>
 #include <fcntl.h>
+#include <ifaddrs.h>
 #include <iostream>
 #include <map>
+#include <net/if.h>
 #include <netinet/in.h>
 #include <string>
 #include <sys/select.h>
 #include <sys/socket.h>
 #include <thread>
 #include <unistd.h>
+#include <vector>
 
 class NetworkAdapter {
 private:
@@ -90,6 +93,29 @@ public:
       : server_fd(-1), client_fd(-1), is_server(false), is_connected(false) {}
 
   ~NetworkAdapter() { disconnect(); }
+
+  // Возвращает локальные IPv4-адреса этой машины (без loopback),
+  // чтобы показать сопернику, что вводить для подключения.
+  static std::vector<std::string> getLocalIPv4() {
+    std::vector<std::string> ips;
+    struct ifaddrs *ifaddr = nullptr;
+    if (getifaddrs(&ifaddr) < 0)
+      return ips;
+    for (struct ifaddrs *ifa = ifaddr; ifa != nullptr; ifa = ifa->ifa_next) {
+      if (ifa->ifa_addr == nullptr)
+        continue;
+      if (ifa->ifa_addr->sa_family != AF_INET)
+        continue;
+      if (!(ifa->ifa_flags & IFF_UP) || (ifa->ifa_flags & IFF_LOOPBACK))
+        continue;
+      char buf[INET_ADDRSTRLEN];
+      auto *sin = reinterpret_cast<struct sockaddr_in *>(ifa->ifa_addr);
+      if (inet_ntop(AF_INET, &sin->sin_addr, buf, sizeof(buf)))
+        ips.emplace_back(buf);
+    }
+    freeifaddrs(ifaddr);
+    return ips;
+  }
 
   // Статическая функция для сканирования локальной сети клиентом
   static std::map<std::string, int>

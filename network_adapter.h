@@ -108,6 +108,14 @@ public:
         continue;
       if (!(ifa->ifa_flags & IFF_UP) || (ifa->ifa_flags & IFF_LOOPBACK))
         continue;
+      // Пропускаем виртуальные интерфейсы (Docker/мосты/VM), по ним соперник
+      // из локальной сети всё равно не подключится — они только путают.
+      const char *name = ifa->ifa_name ? ifa->ifa_name : "";
+      if (std::strncmp(name, "docker", 6) == 0 ||
+          std::strncmp(name, "br-", 3) == 0 ||
+          std::strncmp(name, "veth", 4) == 0 ||
+          std::strncmp(name, "virbr", 5) == 0)
+        continue;
       char buf[INET_ADDRSTRLEN];
       auto *sin = reinterpret_cast<struct sockaddr_in *>(ifa->ifa_addr);
       if (inet_ntop(AF_INET, &sin->sin_addr, buf, sizeof(buf)))

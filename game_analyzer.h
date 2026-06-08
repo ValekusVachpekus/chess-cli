@@ -26,7 +26,9 @@
 #ifndef GAME_ANALYZER_H
 #define GAME_ANALYZER_H
 
+#include <cctype>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <functional>
 #include <string>
@@ -73,9 +75,12 @@ inline std::string formatWhiteCp(int absCp) {
     int n = (ANALYZER_MATE_BASE - std::abs(absCp)) / 100;
     return std::string(absCp > 0 ? "M" : "-M") + std::to_string(n);
   }
-  char buf[16];
-  double v = absCp / 100.0;
-  snprintf(buf, sizeof(buf), "%+.2f", v);
+  // Build the decimal by hand: "%f" honours LC_NUMERIC (comma on RU locales),
+  // but the rest of the app prints dotted pawn values, so keep dots here too.
+  int a = std::abs(absCp);
+  char buf[24];
+  snprintf(buf, sizeof(buf), "%c%d.%02d", absCp < 0 ? '-' : '+', a / 100,
+           a % 100);
   return std::string(buf);
 }
 
@@ -108,8 +113,28 @@ inline void parseEvalString(const std::string &s, int &absCp,
       absCp = neg ? (-ANALYZER_MATE_BASE + n * 100)
                   : (ANALYZER_MATE_BASE - n * 100);
     } else {
-      double v = std::atof(score.c_str());
-      absCp = static_cast<int>(std::lround(v * 100.0));
+      // Locale-independent decimal parse ("+1.25" -> 125 cp). atof/strtod honour
+      // LC_NUMERIC, so on comma locales they stop at the '.' and return 0.
+      long cp = 0;
+      size_t j = idx;
+      while (j < score.size() &&
+             std::isdigit(static_cast<unsigned char>(score[j]))) {
+        cp = cp * 10 + (score[j] - '0');
+        j++;
+      }
+      cp *= 100;
+      if (j < score.size() && score[j] == '.') {
+        j++;
+        long mult = 10;
+        while (j < score.size() &&
+               std::isdigit(static_cast<unsigned char>(score[j])) &&
+               mult >= 1) {
+          cp += (score[j] - '0') * mult;
+          mult /= 10;
+          j++;
+        }
+      }
+      absCp = neg ? static_cast<int>(-cp) : static_cast<int>(cp);
     }
   }
 

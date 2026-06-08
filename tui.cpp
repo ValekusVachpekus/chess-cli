@@ -156,8 +156,7 @@ void drawAnalysisPanel(int offsetX, int offsetY, bool active, size_t replayIndex
   }
 
   if (!active) {
-    mvprintw(py, px, "Press 'a' to analyze");
-    return;
+    return; // nothing to show until the game has been analysed
   }
 
   mvprintw(py, px, "== Analysis ==");
@@ -659,6 +658,8 @@ int main(int argc, char **argv) {
     int current_offsetY = startCentered ? ((r > 10) ? (r - 10) / 2 : 0) : 0;
 
     if (importFromChessCom) {
+      clear(); // wipe menu/engine-init leftovers before prompting
+      refresh();
       string user =
           promptInput(current_offsetY + 11, "chess.com username: ", "");
       clear();
@@ -696,6 +697,16 @@ int main(int argc, char **argv) {
         return 1;
       }
       game.fillBoard();
+      // Orient the board from the imported player's side.
+      const ChessComGame &chosen = games[static_cast<size_t>(choice)];
+      auto lower = [](string s) {
+        for (char &ch : s)
+          ch = static_cast<char>(tolower(static_cast<unsigned char>(ch)));
+        return s;
+      };
+      if (lower(user) == lower(chosen.blackUser)) {
+        flipped = true;
+      }
       status = "Imported chess.com game: " +
                to_string(replayHistory.size()) + " moves. Press 'a' to analyse.";
     } else {
@@ -709,8 +720,8 @@ int main(int argc, char **argv) {
         }
         inFile.close();
         game.fillBoard();
-        status =
-            "Replay loaded. Total moves: " + to_string(replayHistory.size());
+        status = "Replay loaded. Total moves: " +
+                 to_string(replayHistory.size()) + ". Press 'a' to analyse.";
       } else {
         endwin();
         cerr << "Error: Replay file '" << filename << "' not found!\n";

@@ -19,6 +19,11 @@
 #define CHESSGAME_SILENT
 #include "gameboard.cpp"
 #include "network_adapter.h"
+// Analysis + chess.com import (included after gameboard.cpp so they see
+// ChessFacade / Color / Type).
+#include "chesscom_adapter.h"
+#include "game_analyzer.h"
+#include "pgn_parser.h"
 #include <fstream>
 #include <getopt.h>
 #include <locale.h>
@@ -119,6 +124,77 @@ void drawBoard(ChessFacade &game, int cursorX, int cursorY,
   refresh();
 }
 
+// Board offsets, computed the same way drawBoard does, so the analysis panel
+// lines up with the board.
+void computeOffsets(bool centerBoard, int &offsetX, int &offsetY) {
+  int rows = 0, cols = 0;
+  getmaxyx(stdscr, rows, cols);
+  const int boardWidth = 19;
+  const int boardHeight = 10;
+  offsetX = centerBoard ? ((cols > boardWidth) ? (cols - boardWidth) / 2 : 0) : 0;
+  offsetY =
+      centerBoard ? ((rows > boardHeight) ? (rows - boardHeight) / 2 : 0) : 0;
+}
+
+// Analysis side panel, drawn to the right of the board (column offsetX + 22).
+// Call after drawBoard each frame in the replay loop.
+void drawAnalysisPanel(int offsetX, int offsetY, bool active, size_t replayIndex,
+                       size_t total, const GameAnalysis &analysis,
+                       bool analyzing, int progDone, int progTotal) {
+  int px = offsetX + 22;
+  int py = offsetY;
+
+  if (analyzing) {
+    const int barW = 20;
+    int filled = (progTotal > 0) ? (progDone * barW) / progTotal : 0;
+    string bar(static_cast<size_t>(filled), '#');
+    bar.resize(barW, ' ');
+    mvprintw(py, px, "Analyzing game...");
+    mvprintw(py + 1, px, "[%s] %d/%d", bar.c_str(), progDone, progTotal);
+    refresh();
+    return;
+  }
+
+  if (!active) {
+    return; // nothing to show until the game has been analysed
+  }
+
+  mvprintw(py, px, "== Analysis ==");
+  if (replayIndex == 0) {
+    mvprintw(py + 1, px, "Initial position");
+    return;
+  }
+  size_t idx = replayIndex - 1;
+  if (idx >= analysis.plies.size()) {
+    return;
+  }
+  const PlyAnalysis &p = analysis.plies[idx];
+  Color mover = (idx % 2 == 0) ? WHITE : BLACK;
+  mvprintw(py + 1, px, "Move %zu/%zu (%s)", replayIndex, total,
+           mover == WHITE ? "White" : "Black");
+  mvprintw(py + 2, px, "Played: %s   ", p.uci.c_str());
+  mvprintw(py + 3, px, "Best  : %s   ",
+           p.bestUci.empty() ? "-" : p.bestUci.c_str());
+  mvprintw(py + 4, px, "Eval  : %s -> %s   ",
+           formatWhiteCp(p.evalBeforeWhiteCp).c_str(),
+           formatWhiteCp(p.evalAfterWhiteCp).c_str());
+  mvprintw(py + 5, px, "Loss  : %d cp   ", p.lossCp);
+
+  int cp = qualityColorPair(p.quality);
+  bool bold =
+      (p.quality == MoveQuality::Best || p.quality == MoveQuality::Excellent);
+  attron(COLOR_PAIR(cp));
+  if (bold) {
+    attron(A_BOLD);
+  }
+  mvprintw(py + 6, px, "[%s]            ", qualityLabel(p.quality));
+  if (bold) {
+    attroff(A_BOLD);
+  }
+  attroff(COLOR_PAIR(cp));
+  refresh();
+}
+
 string promptInput(int row, const string &label, const string &defaultValue) {
   char buffer[64];
   buffer[0] = '\0';
@@ -214,7 +290,9 @@ void printHelp() {
   cout
       << "Usage: chess-tui [OPTIONS]\n\n"
       << "Options:\n"
-      << "  -m, --mode <mode>    Game mode: human, white, black, auto, replay\n"
+      << "  -m, --mode <mode>    Game mode: human, white, black, auto, replay, "
+         "chesscom\n"
+      << "                       (replay: press 'a' to analyse the game)\n"
       << "  -t, --time <ms>      Bot movetime in milliseconds (default: 200)\n"
       << "  -i, --icons <1|2|3|4>  Icon set (1: Nerd, 2: Markdown, 3: ASCII, "
          "4: Fae)\n"
@@ -277,9 +355,9 @@ int main(int argc, char **argv) {
       modeArg = optarg;
       modeProvided = true;
       if (modeArg != "human" && modeArg != "white" && modeArg != "black" &&
-          modeArg != "auto" && modeArg != "replay") {
+          modeArg != "auto" && modeArg != "replay" && modeArg != "chesscom") {
         cerr << "Error: invalid mode '" << modeArg
-             << "'. Use human, white, black, auto, replay.\n";
+             << "'. Use human, white, black, auto, replay, chesscom.\n";
         return 1;
       }
       break;
@@ -339,9 +417,12 @@ int main(int argc, char **argv) {
     }
   }
 
+  curl_global_init(CURL_GLOBAL_DEFAULT);
+
   NetworkAdapter netAdapter;
   bool networkEnabled = false;
   char mode = 'h';
+  bool importFromChessCom = false;
 
   // 1. ТОЛЬКО ОДИН РАЗ ЗАПУСКАЕМ ИНТЕРФЕЙС
   setlocale(LC_ALL, "");
@@ -356,6 +437,13 @@ int main(int argc, char **argv) {
   init_pair(COLOR_BLACK_PIECE, COLOR_YELLOW, -1);
   init_pair(COLOR_HIGHLIGHT, COLOR_GREEN, -1);
   init_pair(COLOR_CAPTURE, COLOR_RED, -1);
+  // Move-quality badges for analysis mode.
+  init_pair(COLOR_Q_BOOK, COLOR_CYAN, -1);
+  init_pair(COLOR_Q_BEST, COLOR_GREEN, -1);
+  init_pair(COLOR_Q_GOOD, COLOR_GREEN, -1);
+  init_pair(COLOR_Q_INACC, COLOR_YELLOW, -1);
+  init_pair(COLOR_Q_MISTAKE, COLOR_MAGENTA, -1);
+  init_pair(COLOR_Q_BLUNDER, COLOR_RED, -1);
 
   // 2. ВЫБОР ИКОНОК
   if (!iconProvided) {
@@ -376,7 +464,7 @@ int main(int argc, char **argv) {
     vector<string> modeOptions = {
         "1. Local: Human vs Human", "2. Local: Play vs Bot",
         "3. Network: Create Game (Host)", "4. Network: Find Local Games (Join)",
-        "5. Replay Mode"};
+        "5. Replay Mode", "6. Online: Import from chess.com"};
     int modeIndex = promptMenu(2, "Select game mode:", modeOptions);
 
     if (modeIndex == 0) {
@@ -399,6 +487,9 @@ int main(int argc, char **argv) {
       isClient = true;
     } else if (modeIndex == 4) {
       mode = 'r';
+    } else if (modeIndex == 5) {
+      mode = 'r';
+      importFromChessCom = true;
     }
     modeProvided = true; // ВАЖНО: блокируем повторный вызов
   } else if (modeProvided) {
@@ -411,7 +502,10 @@ int main(int argc, char **argv) {
       mode = 'a';
     else if (modeArg == "replay")
       mode = 'r';
-    else
+    else if (modeArg == "chesscom") {
+      mode = 'r';
+      importFromChessCom = true;
+    } else
       mode = 'h';
   }
 
@@ -555,27 +649,84 @@ int main(int argc, char **argv) {
   // Replay history
   vector<string> replayHistory;
   size_t replayIndex = 0;
+  GameAnalysis analysis;     // filled on demand by pressing 'a'
+  bool analysisActive = false;
 
   if (mode == 'r') {
     int r = 0, c = 0;
     getmaxyx(stdscr, r, c);
     int current_offsetY = startCentered ? ((r > 10) ? (r - 10) / 2 : 0) : 0;
 
-    string filename = promptInput(current_offsetY + 11,
-                                  "Enter replay file path: ", "save.txt");
-    ifstream inFile(filename);
-    if (inFile.is_open()) {
-      string mv;
-      while (inFile >> mv) {
-        replayHistory.push_back(mv);
+    if (importFromChessCom) {
+      clear(); // wipe menu/engine-init leftovers before prompting
+      refresh();
+      string user =
+          promptInput(current_offsetY + 11, "chess.com username: ", "");
+      clear();
+      mvprintw(current_offsetY + 11, 0, "Fetching games for '%s'...",
+               user.c_str());
+      refresh();
+
+      ChessComAdapter cc;
+      vector<ChessComGame> games;
+      string err = cc.fetchUserGames(user, games);
+      if (!err.empty()) {
+        endwin();
+        cerr << "chess.com error: " << err << "\n";
+        return 1;
       }
-      inFile.close();
+
+      const size_t maxList = 30; // keep the selection menu on one screen
+      if (games.size() > maxList) {
+        games.resize(maxList);
+      }
+      vector<string> labels;
+      for (const auto &g : games) {
+        labels.push_back(g.whiteUser + " (W) vs " + g.blackUser + " (B) | " +
+                         g.whiteResult + "-" + g.blackResult + " | " +
+                         g.timeClass + " | " + g.endDate);
+      }
+      int choice = promptMenu(
+          2, "Select a game (newest first):", labels);
+
+      string convErr;
+      if (!sanGameToUci(games[static_cast<size_t>(choice)].pgn, replayHistory,
+                        convErr)) {
+        endwin();
+        cerr << "Failed to parse game PGN: " << convErr << "\n";
+        return 1;
+      }
       game.fillBoard();
-      status = "Replay loaded. Total moves: " + to_string(replayHistory.size());
+      // Orient the board from the imported player's side.
+      const ChessComGame &chosen = games[static_cast<size_t>(choice)];
+      auto lower = [](string s) {
+        for (char &ch : s)
+          ch = static_cast<char>(tolower(static_cast<unsigned char>(ch)));
+        return s;
+      };
+      if (lower(user) == lower(chosen.blackUser)) {
+        flipped = true;
+      }
+      status = "Imported chess.com game: " +
+               to_string(replayHistory.size()) + " moves. Press 'a' to analyse.";
     } else {
-      endwin();
-      cerr << "Error: Replay file '" << filename << "' not found!\n";
-      return 1;
+      string filename = promptInput(current_offsetY + 11,
+                                    "Enter replay file path: ", "save.txt");
+      ifstream inFile(filename);
+      if (inFile.is_open()) {
+        string mv;
+        while (inFile >> mv) {
+          replayHistory.push_back(mv);
+        }
+        inFile.close();
+        game.fillBoard();
+        status = "Replay loaded. Total moves: " +
+                 to_string(replayHistory.size()) + ". Press 'a' to analyse.";
+      } else {
+        endwin();
+        cerr << "Error: Replay file '" << filename << "' not found!\n";
+        return 1;
+      }
     }
   }
 
@@ -586,6 +737,12 @@ int main(int argc, char **argv) {
     if (mode == 'r') {
       drawBoard(game, cursorX, cursorY, {}, status, botInfo, turn, flipped,
                 flipOnTurn, centerBoard, hideUI);
+      {
+        int ox = 0, oy = 0;
+        computeOffsets(centerBoard, ox, oy);
+        drawAnalysisPanel(ox, oy, analysisActive, replayIndex,
+                          replayHistory.size(), analysis, false, 0, 0);
+      }
 
       if (autoPlay) {
         timeout(moveTimeMs); // Задержка берется из -t (по умолчанию 200мс)
@@ -622,6 +779,54 @@ int main(int argc, char **argv) {
         status = "Move " + to_string(replayIndex) + "/" +
                  to_string(replayHistory.size()) + " | " +
                  game.getPositionEvaluation();
+      } else if (ch == 'a' || ch == 'A') {
+        if (!botEnabled) {
+          status = "Analysis needs Stockfish (engine offline)";
+        } else if (replayHistory.empty()) {
+          status = "Nothing to analyse";
+        } else {
+          int ox = 0, oy = 0;
+          computeOffsets(centerBoard, ox, oy);
+          string mt =
+              promptInput(oy + 11, "Analysis movetime ms [" +
+                                       to_string(moveTimeMs) + "]: ",
+                          to_string(moveTimeMs));
+          int amt = moveTimeMs;
+          try {
+            amt = stoi(mt);
+          } catch (...) {
+            amt = moveTimeMs;
+          }
+          if (amt < 10) {
+            amt = 10;
+          }
+          size_t savedIndex = replayIndex;
+          analysis = analyzeGame(
+              game, replayHistory, amt, [&](int done, int total) {
+                int pox = 0, poy = 0;
+                computeOffsets(centerBoard, pox, poy);
+                drawBoard(game, cursorX, cursorY, {}, "Analysing game...",
+                          botInfo, game.getCurrentTurn(), flipped, flipOnTurn,
+                          centerBoard, hideUI);
+                drawAnalysisPanel(pox, poy, true, 0, replayHistory.size(),
+                                  analysis, true, done, total);
+              });
+          // Restore the board to where the user was (mirrors KEY_LEFT rebuild).
+          game.fillBoard();
+          for (size_t i = 0; i < savedIndex; i++) {
+            game.makeMoveByUCI(replayHistory[i]);
+          }
+          replayIndex = savedIndex;
+          game.setMoveTimeMs(moveTimeMs); // restore eval movetime
+          if (flipOnTurn) {
+            flipped = (game.getCurrentTurn() == BLACK);
+          }
+          analysisActive = analysis.complete;
+          status = analysis.complete
+                       ? "Analysis complete (movetime " + to_string(amt) +
+                             "ms). Use arrows to browse."
+                       : "Analysis failed";
+        }
       } else if (ch == KEY_RIGHT || ch == 'l') {
         if (replayIndex < replayHistory.size()) {
           game.makeMoveByUCI(replayHistory[replayIndex]);

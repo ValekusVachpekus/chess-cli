@@ -8,7 +8,7 @@ Using: `./gameboard`. \
 
 ## TUI version
 `tui.cpp` is a TUI version of game. Controls are arrows or VIM-keys. It also can rotate board depending on player's side. \
-Compilation: `g++ tui.cpp -lncurses -o chess-tui`. \
+Compilation: `g++ tui.cpp -lncurses -lcurl -o chess-tui` (needs libcurl for the chess.com import; the bundled `json.hpp` is header-only). \
 Using: `./chess-tui` \
 There are hot keys of TUI version:
  - f - toggle auto-flip (board flips to the side whose turn it is)
@@ -30,7 +30,8 @@ The TUI version supports standard GNU/POSIX command-line arguments for quick con
     * `white` — Human plays White, bot plays Black.
     * `black` — Human plays Black, bot plays White.
     * `auto` — Bot vs Bot simulation.
-    * `replay` — Replay of a saved game with Stockfish feedback.
+    * `replay` — Replay of a saved game with Stockfish feedback (press `a` to analyse).
+    * `chesscom` — Import a game from chess.com by username, then replay/analyse it.
 * `-t, --time <ms>`
     Set the bot movetime in milliseconds (default: 200).
 
@@ -117,6 +118,35 @@ Game supports replay of game with stockfish feedback.
 3. Type your game save path.
 4. Use arrows to move turns and `E` to evaluate move and best move using stockfish.
 <img width="960" height="354" alt="image" src="https://github.com/user-attachments/assets/9057dbc6-8033-4f0f-aaa8-dc6f5c11b644" />
+
+
+## Analysis mode
+
+Inside replay mode you can analyse the whole game like the chess.com review:
+1. Load a game in `replay` mode (from a save file) or import one from chess.com.
+2. Press `a`. You will be asked for the per-move thinking time in milliseconds
+   (a longer time is more accurate but slower; ~40 moves at 300 ms ≈ 12 s).
+3. Stockfish evaluates every position once (a progress bar is shown), then a
+   side panel appears next to the board.
+4. Browse with the arrow keys. For each move the panel shows the move played,
+   the engine's best move, the evaluation before → after, the centipawn loss
+   and a colour-coded quality badge:
+   **Book** (opening theory), **Best/Excellent**, **Good**, **Inaccuracy ?!**,
+   **Mistake ?**, **Blunder ??**.
+
+## Import from chess.com
+
+Pull a real game straight from chess.com and replay/analyse it:
+1. Launch the game and select `6. Online: Import from chess.com` in the menu,
+   or run `chess-tui -m chesscom`.
+2. Type a chess.com username. The latest monthly archive is downloaded and the
+   most recent games (standard chess only) are listed with players, result,
+   time class and date.
+3. Pick a game — it loads into replay mode. Use the arrow keys to browse and
+   press `a` to analyse it.
+
+> Requires libcurl at build time (`-lcurl`) and internet access at runtime. The
+> chess.com public API needs no account or API key.
 
 
 ## TODO

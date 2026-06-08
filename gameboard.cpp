@@ -1388,6 +1388,39 @@ public:
     return getLegalMovesForSelected();
   }
 
+  // Enumerate every legal move for the side to move as UCI strings. Reuses the
+  // (check-filtered) getLegalMovesFor, so castling/en-passant/promotion targets
+  // are already legal. Pawn moves reaching the back rank are expanded into the
+  // four promotion variants (q/r/b/n) so a SAN matcher can pick the right one.
+  vector<string> getAllLegalUCIForCurrentTurn() {
+    vector<string> result;
+    for (int x = 0; x < 8; x++) {
+      for (int y = 0; y < 8; y++) {
+        IFigure *fig = gameboard->getFigure(Coordinates(x, y));
+        if (fig == nullptr || fig->getColor() != currentTurn) {
+          continue;
+        }
+        Coordinates from = fig->getCoordinates();
+        bool isPawn = fig->getType() == PAWN;
+        for (const auto &to : getLegalMovesFor(fig)) {
+          string base;
+          base += static_cast<char>('a' + from.getX());
+          base += static_cast<char>('1' + from.getY());
+          base += static_cast<char>('a' + to.getX());
+          base += static_cast<char>('1' + to.getY());
+          if (isPawn && (to.getY() == 0 || to.getY() == 7)) {
+            for (char p : {'q', 'r', 'b', 'n'}) {
+              result.push_back(base + p);
+            }
+          } else {
+            result.push_back(base);
+          }
+        }
+      }
+    }
+    return result;
+  }
+
   bool selectFigure(Color color, Coordinates coordinates) {
     if (!coordinates.canMove()) {
       return false;

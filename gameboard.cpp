@@ -67,14 +67,30 @@ enum IconStyle {
   ICON_NERD = 1,
   ICON_UNICODE = 2,
   ICON_ASCII = 3,
-  ICON_FAE = 4
+  ICON_FAE = 4,
+  ICON_CHESS = 5 // standard Unicode chess symbols (single-cell, well aligned)
 };
 static IconStyle gCurrentIconStyle = ICON_NERD;
 
 void setIconStyle(IconStyle style) { gCurrentIconStyle = style; }
 
 string typeToString(Type type) {
-  if (gCurrentIconStyle == ICON_UNICODE) {
+  if (gCurrentIconStyle == ICON_CHESS) {
+    switch (type) { // ♟ ♞ ♝ ♜ ♛ ♚ (solid set, colored by side)
+    case PAWN:
+      return "♟";
+    case HORSE:
+      return "♞";
+    case ELEPHANT:
+      return "♝";
+    case KING:
+      return "♚";
+    case QUEEN:
+      return "♛";
+    case LADYA:
+      return "♜";
+    }
+  } else if (gCurrentIconStyle == ICON_UNICODE) {
     switch (type) { // 󰡙 󰡘 󰡜 󰡛 󰡚 󰡗
     case PAWN:
       return "󰡙";
@@ -701,7 +717,7 @@ private:
 
 public:
   Ladya(int id, Color color, IBoard *gameboard, Coordinates coordinates)
-      : Figure(id, color, gameboard, 4, coordinates, LADYA) {}
+      : Figure(id, color, gameboard, 5, coordinates, LADYA) {}
 
   vector<Coordinates> getValidMoves() override {
     vector<Coordinates> validMoves = OrthogonalMoving::getOrthogonalMoves(this);
@@ -803,7 +819,7 @@ public:
 class Queen : public Figure {
 public:
   Queen(int id, Color color, IBoard *gameboard, Coordinates coordinates)
-      : Figure(id, color, gameboard, 5, coordinates, QUEEN) {}
+      : Figure(id, color, gameboard, 9, coordinates, QUEEN) {}
 
   vector<Coordinates> getValidMoves() override {
     vector<Coordinates> validMoves = DiagonalMoving::getDiagonalMoves(this);
@@ -1038,6 +1054,16 @@ public:
 };
 
 class ChessFacade {
+public:
+  // A piece that has been taken off the board. cost is read via getCost() at the
+  // moment of capture (the figure object is deleted right after), so material
+  // can be summed later for the score display.
+  struct Captured {
+    Type type;
+    Color color;
+    int cost;
+  };
+
 private:
   Board *gameboard;
   IFigure *selected;
@@ -1046,6 +1072,8 @@ private:
   string lastExecutedUCIMove = ""; // For multiplayer.
   vector<string> moveHistory;      // История ходов в формате UCI
   map<string, int> positionCounts; // Количество повторений каждой позиции
+  vector<Captured> capturedFromWhite; // взятые белые фигуры (их забрали чёрные)
+  vector<Captured> capturedFromBlack; // взятые чёрные фигуры (их забрали белые)
 
   // Engine support
   unique_ptr<ChessEngine> engine;
@@ -1252,6 +1280,8 @@ public:
     gameboard->clearBoard();
     moveHistory.clear();
     positionCounts.clear();
+    capturedFromWhite.clear();
+    capturedFromBlack.clear();
     gameOver = false;
     lastMessage = "";
     currentTurn = WHITE;
@@ -1484,8 +1514,34 @@ public:
     for (auto var : getLegalMovesForSelected()) {
       if (var.equals(coordinates)) {
         bool isCapture = (targetBefore != nullptr);
+        // Determine the captured piece (if any) BEFORE the board mutates, so its
+        // cost can be read via getCost() before the figure is deleted. Recorded
+        // into the captured lists only once the move actually succeeds.
+        bool hasCaptured = false;
+        Captured capRec{};
+        if (targetBefore != nullptr) {
+          capRec = {targetBefore->getType(), targetBefore->getColor(),
+                    targetBefore->getCost()};
+          hasCaptured = true;
+        } else if (movingType == PAWN && from.getX() != coordinates.getX()) {
+          // En passant: the taken pawn sits on the destination file but the
+          // moving pawn's starting rank.
+          IFigure *epPawn =
+              gameboard->getFigure(Coordinates(coordinates.getX(), from.getY()));
+          if (epPawn != nullptr) {
+            capRec = {epPawn->getType(), epPawn->getColor(), epPawn->getCost()};
+            hasCaptured = true;
+          }
+        }
         bool moved = selected->move(coordinates);
         if (moved) {
+          if (hasCaptured) {
+            if (capRec.color == WHITE) {
+              capturedFromWhite.push_back(capRec);
+            } else {
+              capturedFromBlack.push_back(capRec);
+            }
+          }
 
           // Promotion is handled here (not inside Pawn::move) so the old pawn
           // is only deleted once this method no longer touches it.
@@ -1702,6 +1758,26 @@ public:
   }
 
   const vector<string> &getMoveHistory() const { return moveHistory; }
+
+  // Pieces taken off the board, grouped by the colour they belonged to.
+  const vector<Captured> &getCapturedFromWhite() const {
+    return capturedFromWhite;
+  }
+  const vector<Captured> &getCapturedFromBlack() const {
+    return capturedFromBlack;
+  }
+
+  // Is the given colour's king currently in check?
+  bool isInCheck(Color color) const {
+    King *k = findKing(color);
+    return k != nullptr && k->isInCheck();
+  }
+
+  // Square of the given colour's king, or (-1,-1) if absent.
+  Coordinates getKingSquare(Color color) const {
+    King *k = findKing(color);
+    return k != nullptr ? k->getCoordinates() : Coordinates(-1, -1);
+  }
 
   bool loadFromHistory(const vector<string> &history) {
     fillBoard();

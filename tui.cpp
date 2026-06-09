@@ -36,6 +36,120 @@ const int COLOR_BLACK_PIECE = 2;
 const int COLOR_HIGHLIGHT = 3;
 const int COLOR_CAPTURE = 4;
 
+// Board square color pairs (ids 5-10 are used by game_analyzer.h). Each square
+// background combines with a white-side or black-side piece foreground, so we
+// pre-init one pair per (background, side) combination. See initBoardColors().
+const int PAIR_W_LIGHT = 20;
+const int PAIR_B_LIGHT = 21;
+const int PAIR_W_DARK = 22;
+const int PAIR_B_DARK = 23;
+const int PAIR_W_TARGET = 24;
+const int PAIR_B_TARGET = 25;
+const int PAIR_W_CAPTURE = 26;
+const int PAIR_B_CAPTURE = 27;
+const int PAIR_W_LAST = 28;
+const int PAIR_B_LAST = 29;
+const int PAIR_W_CURSOR = 30;
+const int PAIR_B_CURSOR = 31;
+
+// Square background kinds, listed high-priority first (see drawBoard).
+enum SquareBg {
+  SQ_CURSOR,
+  SQ_CHECK,
+  SQ_CAPTURE,
+  SQ_TARGET,
+  SQ_LAST,
+  SQ_LIGHT,
+  SQ_DARK
+};
+
+// ncurses color-pair id for a glyph belonging to `side` (WHITE/BLACK) drawn on a
+// square whose background is `bg`. Empty cells pass WHITE; only the bg shows.
+int squarePair(SquareBg bg, Color side) {
+  bool w = (side != BLACK);
+  switch (bg) {
+  case SQ_CURSOR:
+    return w ? PAIR_W_CURSOR : PAIR_B_CURSOR;
+  case SQ_LIGHT:
+    return w ? PAIR_W_LIGHT : PAIR_B_LIGHT;
+  case SQ_DARK:
+    return w ? PAIR_W_DARK : PAIR_B_DARK;
+  case SQ_TARGET:
+    return w ? PAIR_W_TARGET : PAIR_B_TARGET;
+  case SQ_CAPTURE:
+  case SQ_CHECK: // check reuses the red capture background
+    return w ? PAIR_W_CAPTURE : PAIR_B_CAPTURE;
+  case SQ_LAST:
+    return w ? PAIR_W_LAST : PAIR_B_LAST;
+  }
+  return w ? PAIR_W_LIGHT : PAIR_B_LIGHT;
+}
+
+// Board themes the user can cycle through with 't'.
+//  - THEME_GRAY:    gray checkerboard with colored highlight backgrounds.
+//  - THEME_WOOD:    warm tan/brown checkerboard, same highlights.
+//  - THEME_CLASSIC: the original look — no square fill, pieces colored by side
+//                   (blue/yellow), highlights via foreground markers, compact
+//                   one-row cells.
+enum BoardTheme { THEME_GRAY = 0, THEME_WOOD = 1, THEME_CLASSIC = 2 };
+const int THEME_COUNT = 3;
+static int gTheme = THEME_GRAY;
+
+const char *themeName(int t) {
+  switch (t) {
+  case THEME_GRAY:
+    return "Gray";
+  case THEME_WOOD:
+    return "Wood";
+  case THEME_CLASSIC:
+    return "Classic";
+  }
+  return "?";
+}
+
+// Initialise the board color pairs for `theme`. Uses a 256-color palette when
+// the terminal supports it, otherwise the basic 8 colors. (THEME_CLASSIC draws
+// with the COLOR_*_PIECE foreground pairs instead and ignores these.)
+void initBoardColors(int theme) {
+  int whiteFg, blackFg, lightBg, darkBg, targetBg, captureBg, lastBg, cursorBg;
+  if (COLORS >= 256) {
+    whiteFg = 231; // bright white (white side)
+    blackFg = 16;  // black        (black side)
+    if (theme == THEME_WOOD) {
+      lightBg = 180; // tan   (#d7af87)
+      darkBg = 94;   // brown (#875f00)
+    } else {
+      lightBg = 246; // mid-gray  (#949494)
+      darkBg = 239;  // dark-gray (#4e4e4e)
+    }
+    targetBg = 65;   // muted green  (legal empty target)
+    captureBg = 131; // muted red    (capture)
+    lastBg = 136;    // amber        (last move)
+    cursorBg = 33;   // bright blue cursor (keeps both piece colors visible)
+  } else {
+    whiteFg = COLOR_WHITE;
+    blackFg = COLOR_BLACK;
+    lightBg = COLOR_WHITE;
+    darkBg = COLOR_BLUE;
+    targetBg = COLOR_GREEN;
+    captureBg = COLOR_RED;
+    lastBg = COLOR_YELLOW;
+    cursorBg = COLOR_CYAN;
+  }
+  init_pair(PAIR_W_LIGHT, whiteFg, lightBg);
+  init_pair(PAIR_B_LIGHT, blackFg, lightBg);
+  init_pair(PAIR_W_DARK, whiteFg, darkBg);
+  init_pair(PAIR_B_DARK, blackFg, darkBg);
+  init_pair(PAIR_W_TARGET, whiteFg, targetBg);
+  init_pair(PAIR_B_TARGET, blackFg, targetBg);
+  init_pair(PAIR_W_CAPTURE, whiteFg, captureBg);
+  init_pair(PAIR_B_CAPTURE, blackFg, captureBg);
+  init_pair(PAIR_W_LAST, whiteFg, lastBg);
+  init_pair(PAIR_B_LAST, blackFg, lastBg);
+  init_pair(PAIR_W_CURSOR, whiteFg, cursorBg);
+  init_pair(PAIR_B_CURSOR, blackFg, cursorBg);
+}
+
 bool isMoveInList(const vector<Coordinates> &moves, int x, int y) {
   for (const auto &move : moves) {
     if (move.getX() == x && move.getY() == y) {
@@ -55,72 +169,183 @@ void drawBoard(ChessFacade &game, int cursorX, int cursorY,
   clear();
   int rows = 0, cols = 0;
   getmaxyx(stdscr, rows, cols);
-  const int boardWidth = 19;
+  const int boardWidth = 27; // "8| " gutter + 8 squares * 3 columns
   const int boardHeight = 10;
   int offsetX =
       centerBoard ? ((cols > boardWidth) ? (cols - boardWidth) / 2 : 0) : 0;
   int offsetY =
       centerBoard ? ((rows > boardHeight) ? (rows - boardHeight) / 2 : 0) : 0;
 
-  int row = 8;
+  // Highlight inputs derived from game state (no extra parameters needed).
+  // Last move: the from/to squares of the most recent move (works in replay too,
+  // since the history is rebuilt as you step through it).
+  Coordinates lastFrom(-1, -1), lastTo(-1, -1);
+  const vector<string> &hist = game.getMoveHistory();
+  if (!hist.empty() && hist.back().size() >= 4) {
+    const string &m = hist.back();
+    lastFrom = Coordinates(m[0] - 'a', m[1] - '1');
+    lastTo = Coordinates(m[2] - 'a', m[3] - '1');
+  }
+  // King square of any side currently in check.
+  Coordinates checkW =
+      game.isInCheck(WHITE) ? game.getKingSquare(WHITE) : Coordinates(-1, -1);
+  Coordinates checkB =
+      game.isInCheck(BLACK) ? game.getKingSquare(BLACK) : Coordinates(-1, -1);
+
+  bool classic = (gTheme == THEME_CLASSIC);
+  int cellH = classic ? 1 : 2;       // cell height in text rows
+  int boardRows = 8 * cellH;         // rows the board occupies
+
   for (int sy = 7; sy >= 0; sy--) {
-    int displayRow = flipped ? (8 - sy) : row--;
-    mvprintw(offsetY + (8 - sy), offsetX, "%d| ", displayRow);
+    int displayRow = flipped ? (8 - sy) : (sy + 1);
+    int r0 = offsetY + (7 - sy) * cellH; // top row of this rank's cells
+    mvprintw(r0, offsetX, "%d|", displayRow);
     for (int sx = 0; sx < 8; sx++) {
       int bx = flipped ? (7 - sx) : sx;
       int by = flipped ? (7 - sy) : sy;
       bool isCursor = (sx == cursorX && sy == cursorY);
       bool isValid = isMoveInList(validMoves, bx, by);
       ChessFacade::PieceView piece = game.getPieceAt(Coordinates(bx, by));
-      string cell = ".";
-      int colorPair = 0;
-      if (isValid) {
-        if (piece.present) {
-          cell = typeToString(piece.type);
-          colorPair = COLOR_CAPTURE;
-        } else {
+      bool isLast = (lastFrom.getX() == bx && lastFrom.getY() == by) ||
+                    (lastTo.getX() == bx && lastTo.getY() == by);
+      bool isCheck = (checkW.getX() == bx && checkW.getY() == by) ||
+                     (checkB.getX() == bx && checkB.getY() == by);
+      int cellCol = offsetX + 3 + sx * 3;
+
+      if (classic) {
+        // Original look: foreground colors only, no square fill, one row tall.
+        string cell = piece.present ? typeToString(piece.type) : ".";
+        int cp = 0;
+        if (isCheck || (isValid && piece.present)) {
+          cp = COLOR_CAPTURE; // check / capturable square in red
+        } else if (isValid) {
           cell = "*";
-          colorPair = COLOR_HIGHLIGHT;
+          cp = COLOR_HIGHLIGHT;
+        } else if (piece.present) {
+          cp = (piece.color == WHITE) ? COLOR_WHITE_PIECE : COLOR_BLACK_PIECE;
         }
-      } else if (piece.present) {
-        cell = typeToString(piece.type);
-        colorPair =
-            (piece.color == WHITE) ? COLOR_WHITE_PIECE : COLOR_BLACK_PIECE;
+        if (cp != 0) {
+          attron(COLOR_PAIR(cp));
+        }
+        if (isLast) {
+          attron(A_UNDERLINE);
+        }
+        if (isCursor) {
+          attron(A_REVERSE);
+        }
+        mvprintw(r0, cellCol, " %s ", cell.c_str());
+        if (isCursor) {
+          attroff(A_REVERSE);
+        }
+        if (isLast) {
+          attroff(A_UNDERLINE);
+        }
+        if (cp != 0) {
+          attroff(COLOR_PAIR(cp));
+        }
+        continue;
       }
 
-      if (colorPair != 0) {
-        attron(COLOR_PAIR(colorPair));
-      }
+      // Background themes (gray / wood): a filled 3x2 square per cell so the
+      // board reads as squares. Priority: cursor > check > capture-target >
+      // empty-target > last-move > checkerboard base.
+      SquareBg bg;
       if (isCursor) {
-        attron(A_REVERSE);
+        bg = SQ_CURSOR;
+      } else if (isCheck) {
+        bg = SQ_CHECK;
+      } else if (isValid && piece.present) {
+        bg = SQ_CAPTURE;
+      } else if (isValid) {
+        bg = SQ_TARGET;
+      } else if (isLast) {
+        bg = SQ_LAST;
+      } else {
+        bg = ((bx + by) % 2 == 0) ? SQ_DARK : SQ_LIGHT;
       }
-      mvprintw(offsetY + (8 - sy), offsetX + 3 + sx * 2, "%s", cell.c_str());
-      if (isCursor) {
-        attroff(A_REVERSE);
+
+      string cell;
+      Color fgSide;
+      if (piece.present) {
+        cell = typeToString(piece.type);
+        fgSide = piece.color;
+      } else if (bg == SQ_TARGET) {
+        cell = "*"; // marker on an empty legal-move square
+        fgSide = BLACK;
+      } else {
+        cell = " ";
+        fgSide = WHITE;
       }
-      if (colorPair != 0) {
-        attroff(COLOR_PAIR(colorPair));
+
+      int pair = squarePair(bg, fgSide);
+      attron(COLOR_PAIR(pair));
+      if (piece.present) {
+        attron(A_BOLD); // crisp glyphs against the colored squares
       }
+      mvprintw(r0, cellCol, " %s ", cell.c_str()); // glyph row, centered
+      if (piece.present) {
+        attroff(A_BOLD);
+      }
+      mvprintw(r0 + 1, cellCol, "   "); // lower row, same background fill
+      attroff(COLOR_PAIR(pair));
     }
   }
-  if (flipped) {
-    mvprintw(offsetY + 9, offsetX, "%s| H G F E D C B A",
-             getCornerIcon().c_str());
-  } else {
-    mvprintw(offsetY + 9, offsetX, "%s| A B C D E F G H",
-             getCornerIcon().c_str());
+
+  int labelRow = offsetY + boardRows;
+  // File labels, one per column, centered under each square.
+  mvprintw(labelRow, offsetX, "%s", getCornerIcon().c_str());
+  mvprintw(labelRow, offsetX + 1, "|");
+  for (int sx = 0; sx < 8; sx++) {
+    char f = static_cast<char>(flipped ? ('H' - sx) : ('A' + sx));
+    mvprintw(labelRow, offsetX + 4 + sx * 3, "%c", f);
   }
+
+  // Captured pieces + material score, lichess-style, just below the board.
+  // White's row shows the black pieces White has taken (getCapturedFromBlack),
+  // and vice-versa. The leading side gets a "+N" material advantage.
+  {
+    const auto &whiteTook = game.getCapturedFromBlack(); // black pieces taken
+    const auto &blackTook = game.getCapturedFromWhite(); // white pieces taken
+    int matWhite = 0, matBlack = 0;
+    for (const auto &c : whiteTook) {
+      matWhite += c.cost;
+    }
+    for (const auto &c : blackTook) {
+      matBlack += c.cost;
+    }
+    int adv = matWhite - matBlack;
+
+    auto drawTaken = [&](int rowAbs, const char *label,
+                         const vector<ChessFacade::Captured> &taken,
+                         int piecePair, int plus) {
+      mvprintw(rowAbs, offsetX, "%s", label);
+      int col = offsetX + 7; // both labels ("White: "/"Black: ") are 7 chars
+      for (size_t i = 0; i < taken.size(); i++) {
+        attron(COLOR_PAIR(piecePair));
+        mvprintw(rowAbs, col, "%s", typeToString(taken[i].type).c_str());
+        attroff(COLOR_PAIR(piecePair));
+        col += 2;
+      }
+      if (plus > 0) {
+        mvprintw(rowAbs, col + 1, "+%d", plus);
+      }
+    };
+    drawTaken(labelRow + 1, "White: ", whiteTook, COLOR_BLACK_PIECE,
+              adv > 0 ? adv : 0);
+    drawTaken(labelRow + 2, "Black: ", blackTook, COLOR_WHITE_PIECE,
+              adv < 0 ? -adv : 0);
+  }
+
   if (!hideUI) {
-    mvprintw(offsetY + 11, offsetX, "Turn: %s",
-             (turn == WHITE) ? "WHITE" : "BLACK");
-    mvprintw(offsetY + 12, offsetX, "Status: %s", status.c_str());
-    mvprintw(offsetY + 13, offsetX, "%s", botInfo.c_str());
-    mvprintw(offsetY + 14, offsetX, "Flip on turn: %s",
-             flipOnTurn ? "ON" : "OFF");
-    mvprintw(offsetY + 15, offsetX,
-             "Controls: arrows/jkl, Enter select, f flip, C center, i hide "
-             "interface, s "
-             "save, o load, q quit");
+    int t = labelRow + 4;
+    mvprintw(t, offsetX, "Turn: %s", (turn == WHITE) ? "WHITE" : "BLACK");
+    mvprintw(t + 1, offsetX, "Status: %s", status.c_str());
+    mvprintw(t + 2, offsetX, "%s", botInfo.c_str());
+    mvprintw(t + 3, offsetX, "Flip on turn: %s  Theme: %s",
+             flipOnTurn ? "ON" : "OFF", themeName(gTheme));
+    mvprintw(t + 4, offsetX,
+             "Controls: arrows/jkl, Enter select/deselect, Esc deselect, f "
+             "flip, t theme, C center, i hide UI, s save, o load, q quit");
   }
   refresh();
 }
@@ -130,19 +355,19 @@ void drawBoard(ChessFacade &game, int cursorX, int cursorY,
 void computeOffsets(bool centerBoard, int &offsetX, int &offsetY) {
   int rows = 0, cols = 0;
   getmaxyx(stdscr, rows, cols);
-  const int boardWidth = 19;
+  const int boardWidth = 27; // "8| " gutter + 8 squares * 3 columns
   const int boardHeight = 10;
   offsetX = centerBoard ? ((cols > boardWidth) ? (cols - boardWidth) / 2 : 0) : 0;
   offsetY =
       centerBoard ? ((rows > boardHeight) ? (rows - boardHeight) / 2 : 0) : 0;
 }
 
-// Analysis side panel, drawn to the right of the board (column offsetX + 22).
+// Analysis side panel, drawn to the right of the board (column offsetX + 29).
 // Call after drawBoard each frame in the replay loop.
 void drawAnalysisPanel(int offsetX, int offsetY, bool active, size_t replayIndex,
                        size_t total, const GameAnalysis &analysis,
                        bool analyzing, int progDone, int progTotal) {
-  int px = offsetX + 22;
+  int px = offsetX + 29;
   int py = offsetY;
 
   if (analyzing) {
@@ -400,8 +625,8 @@ void printHelp() {
       << "                       (lichess: play live on lichess.org; set "
          "$LICHESS_TOKEN or .env)\n"
       << "  -t, --time <ms>      Bot movetime in milliseconds (default: 200)\n"
-      << "  -i, --icons <1|2|3|4>  Icon set (1: Nerd, 2: Markdown, 3: ASCII, "
-         "4: Fae)\n"
+      << "  -i, --icons <1-5>    Icon set (1: Nerd, 2: Markdown, 3: ASCII, "
+         "4: Fae, 5: Unicode chess)\n"
       << "  -f, --flip           Flip board at start (black on bottom)\n"
       << "  -c, --center         Center board in terminal\n"
       << "  -H, --hide-ui        Hide UI text (show only board)\n"
@@ -484,10 +709,10 @@ int main(int argc, char **argv) {
     case 'i':
       try {
         iconArg = stoi(optarg);
-        if (iconArg >= 1 && iconArg <= 4) {
+        if (iconArg >= 1 && iconArg <= 5) {
           iconProvided = true;
         } else {
-          cerr << "Error: icons must be 1, 2, 3 or 4.\n";
+          cerr << "Error: icons must be 1, 2, 3, 4 or 5.\n";
           return 1;
         }
       } catch (...) {
@@ -555,6 +780,8 @@ int main(int argc, char **argv) {
   init_pair(COLOR_Q_INACC, COLOR_YELLOW, -1);
   init_pair(COLOR_Q_MISTAKE, COLOR_MAGENTA, -1);
   init_pair(COLOR_Q_BLUNDER, COLOR_RED, -1);
+  // Checkerboard squares + move/check highlights.
+  initBoardColors(gTheme);
 
   // 2. ВЫБОР ИКОНОК
   if (!iconProvided) {
@@ -562,7 +789,8 @@ int main(int argc, char **argv) {
         "1. Nerd Font (     )",
         "2. Classic Markdown (󰡙 󰡘 󰡜 󰡛 󰡚 󰡗)",
         "3. ASCII Minimal (P N B R Q K)",
-        "4. FAE Font (     )"};
+        "4. FAE Font (     )",
+        "5. Unicode Chess (♟ ♞ ♝ ♜ ♛ ♚)"};
     int iconIndex = promptMenu(2, "Select piece icon set:", iconOptions);
     setIconStyle(static_cast<IconStyle>(iconIndex + 1));
     iconProvided = true; // ВАЖНО: блокируем повторный вызов
@@ -1052,6 +1280,10 @@ int main(int argc, char **argv) {
         break;
       } else if (ch == 'i') {
         hideUI = !hideUI;
+      } else if (ch == 't') {
+        gTheme = (gTheme + 1) % THEME_COUNT;
+        initBoardColors(gTheme);
+        status = "Theme: " + string(themeName(gTheme));
       } else if (ch == 'c' || ch == 'C') {
         centerBoard = !centerBoard;
       } else if (ch == ' ') {
@@ -1176,6 +1408,9 @@ int main(int argc, char **argv) {
           if (flipOnTurn) {
             flipped = (game.getCurrentTurn() == BLACK);
           }
+        } else if (ch == 't') {
+          gTheme = (gTheme + 1) % THEME_COUNT;
+          initBoardColors(gTheme);
         }
 
         string enemyMove;
@@ -1282,6 +1517,9 @@ int main(int argc, char **argv) {
         } else if (ch == 'R') {
           lichess->resign();
           status = "Resigning...";
+        } else if (ch == 't') {
+          gTheme = (gTheme + 1) % THEME_COUNT;
+          initBoardColors(gTheme);
         }
         continue;
       } else {
@@ -1321,6 +1559,10 @@ int main(int argc, char **argv) {
     }
     if (ch == 'i') {
       hideUI = !hideUI;
+    } else if (ch == 't') {
+      gTheme = (gTheme + 1) % THEME_COUNT;
+      initBoardColors(gTheme);
+      status = "Theme: " + string(themeName(gTheme));
     } else if (ch == 'c' || ch == 'C') {
       centerBoard = !centerBoard;
     } else if ((ch == KEY_UP || ch == 'k') && cursorY < 7) {
@@ -1390,6 +1632,11 @@ int main(int argc, char **argv) {
     } else if (ch == 'R' && lichessEnabled) {
       lichess->resign();
       status = "Resigning...";
+    } else if (ch == 27) { // Esc cancels the current selection
+      if (game.hasSelection()) {
+        game.clearSelection();
+        status = "Selection cancelled";
+      }
     } else if (ch == '\n' || ch == KEY_ENTER) {
       int bx = flipped ? (7 - cursorX) : cursorX;
       int by = flipped ? (7 - cursorY) : cursorY;
@@ -1400,6 +1647,10 @@ int main(int argc, char **argv) {
         } else {
           status = "Select your piece with available moves";
         }
+      } else if (game.getSelectedCoordinates().equals(cursor)) {
+        // Enter on the already-selected square deselects it.
+        game.clearSelection();
+        status = "Selection cancelled";
       } else {
         if (game.moveFigure(cursor)) {
           bool sendFailed = false;
@@ -1460,6 +1711,9 @@ int main(int argc, char **argv) {
         centerBoard = !centerBoard;
       } else if (ch == 'i') {
         hideUI = !hideUI;
+      } else if (ch == 't') {
+        gTheme = (gTheme + 1) % THEME_COUNT;
+        initBoardColors(gTheme);
       } else {
         break;
       }

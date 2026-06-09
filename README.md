@@ -8,7 +8,7 @@ Using: `./gameboard`. \
 
 ## TUI version
 `tui.cpp` is a TUI version of game. Controls are arrows or VIM-keys. It also can rotate board depending on player's side. \
-Compilation: `g++ tui.cpp -lncurses -lcurl -o chess-tui` (needs libcurl for the chess.com import; the bundled `json.hpp` is header-only). \
+Compilation: `g++ tui.cpp -lncurses -lcurl -o chess-tui` (needs libcurl for the chess.com import and Lichess play; the bundled `json.hpp` is header-only). \
 Using: `./chess-tui` \
 There are hot keys of TUI version:
  - f - toggle auto-flip (board flips to the side whose turn it is)
@@ -32,6 +32,7 @@ The TUI version supports standard GNU/POSIX command-line arguments for quick con
     * `auto` — Bot vs Bot simulation.
     * `replay` — Replay of a saved game with Stockfish feedback (press `a` to analyse).
     * `chesscom` — Import a game from chess.com by username, then replay/analyse it.
+    * `lichess` — Play a live game on lichess.org through the Board API (needs a token, see below).
 * `-t, --time <ms>`
     Set the bot movetime in milliseconds (default: 200).
 
@@ -147,6 +148,37 @@ Pull a real game straight from chess.com and replay/analyse it:
 
 > Requires libcurl at build time (`-lcurl`) and internet access at runtime. The
 > chess.com public API needs no account or API key.
+
+## Play on Lichess
+
+Play live games against real opponents on lichess.org through the official
+[Board API](https://lichess.org/api#tag/Board):
+
+1. Create a **personal API token** at
+   [lichess.org/account/oauth/token](https://lichess.org/account/oauth/token)
+   with the **`board:play`** scope.
+2. Provide the token in one of three ways (checked in this order):
+   * the `LICHESS_TOKEN` environment variable:
+     ```bash
+     LICHESS_TOKEN=lip_xxxxxxxx ./chess-tui -m lichess   # fish: env LICHESS_TOKEN=… ./chess-tui -m lichess
+     ```
+   * a **`.env`** file in the working directory with a line
+     `LICHESS_TOKEN=lip_xxxxxxxx` (git-ignored);
+   * otherwise the app prompts for it (input hidden) and offers to save it to
+     `.env` so it is remembered next time.
+
+   You can also pick `7. Online: Play on Lichess` from the main menu.
+3. Choose how to find an opponent:
+   * **Quick seek** — auto-pairing; pick minutes per side and increment.
+   * **Challenge a player** — enter a username and time control.
+   * **Wait for an incoming challenge** — accept a challenge sent to you.
+4. The board is oriented to your colour, opponent moves stream in live, your
+   moves are sent to Lichess, and both clocks are shown in the status line.
+   Press **`R`** to resign (the game also ends when the server reports
+   mate/resign/timeout/draw). Pawn promotion uses the usual selector.
+
+> Requires libcurl at build time (`-lcurl`) and internet access at runtime.
+> The token is only used to talk to lichess.org and is never persisted.
 
 
 ## TODO

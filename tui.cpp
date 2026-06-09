@@ -23,6 +23,7 @@
 // ChessFacade / Color / Type).
 #include "chesscom_adapter.h"
 #include "game_analyzer.h"
+#include "lichess_adapter.h"
 #include "pgn_parser.h"
 #include <fstream>
 #include <getopt.h>
@@ -212,6 +213,109 @@ string promptInput(int row, const string &label, const string &defaultValue) {
   return input;
 }
 
+// Like promptInput but keeps echo off, so a secret (e.g. a Lichess token) is
+// not shown on screen as it is typed.
+string promptSecret(int row, const string &label) {
+  char buffer[256];
+  buffer[0] = '\0';
+  noecho();
+  curs_set(1);
+  mvprintw(row, 0, "%s", label.c_str());
+  clrtoeol();
+  getnstr(buffer, 255);
+  curs_set(0);
+  return string(buffer);
+}
+
+// Milliseconds -> "M:SS" for clock display.
+string formatClock(long ms) {
+  if (ms < 0) {
+    ms = 0;
+  }
+  long totalSec = ms / 1000;
+  long minutes = totalSec / 60;
+  long seconds = totalSec % 60;
+  char buf[32];
+  snprintf(buf, sizeof(buf), "%ld:%02ld", minutes, seconds);
+  return string(buf);
+}
+
+// Trim surrounding whitespace and a single pair of matching quotes.
+static string trimEnvValue(string s) {
+  size_t a = s.find_first_not_of(" \t\r\n");
+  size_t b = s.find_last_not_of(" \t\r\n");
+  if (a == string::npos) {
+    return "";
+  }
+  s = s.substr(a, b - a + 1);
+  if (s.size() >= 2 && (s.front() == '"' || s.front() == '\'') &&
+      s.back() == s.front()) {
+    s = s.substr(1, s.size() - 2);
+  }
+  return s;
+}
+
+// Reads the value of `key` from a .env file in the current directory. Lines look
+// like `KEY=value` (an optional leading `export ` is ignored). Returns "" if the
+// file or key is absent.
+string readDotenv(const string &path, const string &key) {
+  ifstream f(path);
+  if (!f.is_open()) {
+    return "";
+  }
+  string line;
+  while (getline(f, line)) {
+    string l = line;
+    size_t s = l.find_first_not_of(" \t");
+    if (s != string::npos) {
+      l = l.substr(s);
+    }
+    if (l.rfind("export ", 0) == 0) {
+      l = l.substr(7);
+    }
+    size_t eq = l.find('=');
+    if (eq == string::npos) {
+      continue;
+    }
+    if (trimEnvValue(l.substr(0, eq)) == key) {
+      return trimEnvValue(l.substr(eq + 1));
+    }
+  }
+  return "";
+}
+
+// Stores `key=value` in the .env file, replacing any existing entry for `key`
+// and leaving other lines intact. Returns true on success.
+bool writeDotenv(const string &path, const string &key, const string &value) {
+  vector<string> lines;
+  {
+    ifstream f(path);
+    string line;
+    while (getline(f, line)) {
+      string l = line;
+      size_t s = l.find_first_not_of(" \t");
+      string body = (s == string::npos) ? l : l.substr(s);
+      if (body.rfind("export ", 0) == 0) {
+        body = body.substr(7);
+      }
+      size_t eq = body.find('=');
+      if (eq != string::npos && trimEnvValue(body.substr(0, eq)) == key) {
+        continue; // drop the old entry; we re-append it below
+      }
+      lines.push_back(line);
+    }
+  }
+  ofstream out(path, ios::trunc);
+  if (!out.is_open()) {
+    return false;
+  }
+  for (const string &l : lines) {
+    out << l << "\n";
+  }
+  out << key << "=" << value << "\n";
+  return out.good();
+}
+
 int promptMenu(int row, const string &title, const vector<string> &options) {
   int current = 0;
   while (true) {
@@ -291,8 +395,10 @@ void printHelp() {
       << "Usage: chess-tui [OPTIONS]\n\n"
       << "Options:\n"
       << "  -m, --mode <mode>    Game mode: human, white, black, auto, replay, "
-         "chesscom\n"
+         "chesscom, lichess\n"
       << "                       (replay: press 'a' to analyse the game)\n"
+      << "                       (lichess: play live on lichess.org; set "
+         "$LICHESS_TOKEN or .env)\n"
       << "  -t, --time <ms>      Bot movetime in milliseconds (default: 200)\n"
       << "  -i, --icons <1|2|3|4>  Icon set (1: Nerd, 2: Markdown, 3: ASCII, "
          "4: Fae)\n"
@@ -307,7 +413,7 @@ void printHelp() {
 }
 
 void printVersion() {
-  cout << "chess-tui version 1.3.0\n"
+  cout << "chess-tui version 1.4.0\n"
        << "Copyright (C) 2026 Ilia Shchetkov\n"
        << "License GPLv3+: GNU GPL version 3 or later "
           "<https://gnu.org/licenses/gpl.html>.\n"
@@ -355,9 +461,11 @@ int main(int argc, char **argv) {
       modeArg = optarg;
       modeProvided = true;
       if (modeArg != "human" && modeArg != "white" && modeArg != "black" &&
-          modeArg != "auto" && modeArg != "replay" && modeArg != "chesscom") {
+          modeArg != "auto" && modeArg != "replay" && modeArg != "chesscom" &&
+          modeArg != "lichess") {
         cerr << "Error: invalid mode '" << modeArg
-             << "'. Use human, white, black, auto, replay, chesscom.\n";
+             << "'. Use human, white, black, auto, replay, chesscom, "
+                "lichess.\n";
         return 1;
       }
       break;
@@ -423,6 +531,9 @@ int main(int argc, char **argv) {
   bool networkEnabled = false;
   char mode = 'h';
   bool importFromChessCom = false;
+  bool lichessEnabled = false;
+  Color lichessColor = WHITE;
+  unique_ptr<LichessAdapter> lichess;
 
   // 1. ТОЛЬКО ОДИН РАЗ ЗАПУСКАЕМ ИНТЕРФЕЙС
   setlocale(LC_ALL, "");
@@ -464,7 +575,8 @@ int main(int argc, char **argv) {
     vector<string> modeOptions = {
         "1. Local: Human vs Human", "2. Local: Play vs Bot",
         "3. Network: Create Game (Host)", "4. Network: Find Local Games (Join)",
-        "5. Replay Mode", "6. Online: Import from chess.com"};
+        "5. Replay Mode", "6. Online: Import from chess.com",
+        "7. Online: Play on Lichess"};
     int modeIndex = promptMenu(2, "Select game mode:", modeOptions);
 
     if (modeIndex == 0) {
@@ -490,6 +602,9 @@ int main(int argc, char **argv) {
     } else if (modeIndex == 5) {
       mode = 'r';
       importFromChessCom = true;
+    } else if (modeIndex == 6) {
+      mode = 'L';
+      lichessEnabled = true;
     }
     modeProvided = true; // ВАЖНО: блокируем повторный вызов
   } else if (modeProvided) {
@@ -505,6 +620,9 @@ int main(int argc, char **argv) {
     else if (modeArg == "chesscom") {
       mode = 'r';
       importFromChessCom = true;
+    } else if (modeArg == "lichess") {
+      mode = 'L';
+      lichessEnabled = true;
     } else
       mode = 'h';
   }
@@ -578,6 +696,177 @@ int main(int argc, char **argv) {
     }
   }
 
+  // --- LICHESS LOBBY (token, pairing, wait for game) ---
+  if (lichessEnabled) {
+    const string dotenvPath = ".env";
+    string token;
+    const char *envTok = getenv("LICHESS_TOKEN");
+    if (envTok != nullptr && envTok[0] != '\0') {
+      token = envTok; // $LICHESS_TOKEN wins
+    } else {
+      token = readDotenv(dotenvPath, "LICHESS_TOKEN"); // then the .env file
+    }
+    if (token.empty()) {
+      clear();
+      mvprintw(2, 0, "Lichess personal API token needed (scope board:play).");
+      mvprintw(3, 0, "Create one at https://lichess.org/account/oauth/token");
+      mvprintw(4, 0, "Tip: set $LICHESS_TOKEN or store it in a .env file.");
+      refresh();
+      token = promptSecret(6, "Token: ");
+      if (!token.empty()) {
+        string save = promptInput(8, "Save token to .env? [y/N]: ", "n");
+        if (!save.empty() && (save[0] == 'y' || save[0] == 'Y')) {
+          if (writeDotenv(dotenvPath, "LICHESS_TOKEN", token)) {
+            mvprintw(9, 0, "Saved to %s (keep it private; .gitignore'd).",
+                     dotenvPath.c_str());
+          } else {
+            mvprintw(9, 0, "Could not write %s.", dotenvPath.c_str());
+          }
+          refresh();
+        }
+      }
+    }
+    if (token.empty()) {
+      endwin();
+      cerr << "Lichess: no token provided.\n";
+      return 1;
+    }
+
+    lichess = make_unique<LichessAdapter>(token);
+    string accountId;
+    string verr = lichess->verifyToken(accountId);
+    if (!verr.empty()) {
+      endwin();
+      cerr << "Lichess: " << verr << "\n";
+      return 1;
+    }
+
+    vector<string> lobbyOptions = {"1. Quick seek (auto-pair)",
+                                   "2. Challenge a player",
+                                   "3. Wait for an incoming challenge"};
+    int lobbyChoice =
+        promptMenu(2, "Lichess (" + accountId + "):", lobbyOptions);
+
+    if (lobbyChoice == 0) {
+      string mins = promptInput(8, "Minutes per side [5]: ", "5");
+      string inc = promptInput(9, "Increment seconds [0]: ", "0");
+      int m = 5, ic = 0;
+      try {
+        m = stoi(mins);
+      } catch (...) {
+        m = 5;
+      }
+      try {
+        ic = stoi(inc);
+      } catch (...) {
+        ic = 0;
+      }
+      lichess->startEventStream();
+      lichess->seek(m, ic, false);
+    } else if (lobbyChoice == 1) {
+      string user = promptInput(8, "Opponent username: ", "");
+      string mins = promptInput(9, "Minutes per side [5]: ", "5");
+      string inc = promptInput(10, "Increment seconds [0]: ", "0");
+      int m = 5, ic = 0;
+      try {
+        m = stoi(mins);
+      } catch (...) {
+        m = 5;
+      }
+      try {
+        ic = stoi(inc);
+      } catch (...) {
+        ic = 0;
+      }
+      lichess->startEventStream();
+      string chErr = lichess->challengeUser(user, m, ic, false);
+      if (!chErr.empty()) {
+        endwin();
+        cerr << "Lichess: " << chErr << "\n";
+        return 1;
+      }
+    } else {
+      lichess->startEventStream();
+      timeout(200);
+      int sel = 0;
+      bool accepted = false;
+      while (!accepted) {
+        auto ch = lichess->pollIncomingChallenges();
+        clear();
+        mvprintw(2, 0, "Waiting for incoming challenges (q to cancel)...");
+        if (ch.empty()) {
+          mvprintw(4, 0, "  (none yet)");
+        } else {
+          if (sel >= static_cast<int>(ch.size())) {
+            sel = static_cast<int>(ch.size()) - 1;
+          }
+          for (size_t i = 0; i < ch.size(); i++) {
+            if (static_cast<int>(i) == sel) {
+              attron(A_REVERSE);
+            }
+            mvprintw(4 + static_cast<int>(i), 2, "%s", ch[i].label.c_str());
+            if (static_cast<int>(i) == sel) {
+              attroff(A_REVERSE);
+            }
+          }
+          mvprintw(5 + static_cast<int>(ch.size()), 0,
+                   "Up/Down + Enter to accept");
+        }
+        refresh();
+        int k = getch();
+        if (k == 'q' || k == 'Q') {
+          endwin();
+          return 0;
+        }
+        if (ch.empty()) {
+          continue;
+        }
+        if (k == KEY_UP || k == 'k') {
+          if (sel > 0) {
+            sel--;
+          }
+        } else if (k == KEY_DOWN || k == 'j') {
+          if (sel < static_cast<int>(ch.size()) - 1) {
+            sel++;
+          }
+        } else if (k == '\n' || k == KEY_ENTER) {
+          if (lichess->acceptChallenge(ch[static_cast<size_t>(sel)].id)) {
+            accepted = true;
+          }
+        }
+      }
+      timeout(-1);
+    }
+
+    // Wait for the paired game, then for its first full state.
+    string gid;
+    timeout(150);
+    while (!lichess->gameStarted(gid)) {
+      clear();
+      mvprintw(LINES / 2, COLS / 2 - 22,
+               "Waiting for a game to start... (q to cancel)");
+      refresh();
+      int k = getch();
+      if (k == 'q' || k == 'Q') {
+        endwin();
+        return 0;
+      }
+    }
+    lichess->startGameStream(gid);
+    while (!lichess->ready(lichessColor)) {
+      clear();
+      mvprintw(LINES / 2, COLS / 2 - 11, "Game found, loading...");
+      refresh();
+      int k = getch();
+      if (k == 'q' || k == 'Q') {
+        endwin();
+        return 0;
+      }
+    }
+    timeout(-1);
+    mode = 'L';
+  }
+
   Board *gameboard = new Board();
   ChessFacade game(gameboard);
   game.fillBoard();
@@ -587,7 +876,7 @@ int main(int argc, char **argv) {
   string botInfo = "Bot: OFF";
   string status = "";
 
-  if (!modeProvided && mode != 'h' && mode != 'n') {
+  if (!modeProvided && mode != 'h' && mode != 'n' && mode != 'L') {
     string mt = promptInput(11, "Bot movetime in ms [200]: ", "200");
     try {
       moveTimeMs = stoi(mt);
@@ -599,7 +888,7 @@ int main(int argc, char **argv) {
     }
   }
 
-  if (mode != 'h' && mode != 'n') {
+  if (mode != 'h' && mode != 'n' && mode != 'L') {
     auto engine = make_unique<StockfishAdapter>();
     if (engine->initialize()) {
       game.setEngine(move(engine));
@@ -624,6 +913,9 @@ int main(int argc, char **argv) {
   bool hideUI = false;
   if (startFlipped || isClient || mode == 'w') {
     flipped = true;
+  }
+  if (lichessEnabled) {
+    flipped = (lichessColor == BLACK);
   }
   if (startCentered) {
     centerBoard = true;
@@ -917,6 +1209,89 @@ int main(int argc, char **argv) {
     }
     // End of network_adapter
 
+    // Lichess live game: the server is the source of truth.
+    if (lichessEnabled) {
+      // Server-side endings (resign/abort/timeout/draw) are not detectable from
+      // the local board, so report them straight from the stream.
+      string lst, lwin;
+      if (lichess->isGameOver(lst, lwin) && !game.isGameOver()) {
+        string res = "Game over (" + lst + ")";
+        if (!lwin.empty()) {
+          res += " - " + lwin + " wins";
+        }
+        timeout(-1);
+        drawBoard(game, cursorX, cursorY, {}, res, botInfo, turn, flipped,
+                  flipOnTurn, centerBoard, hideUI);
+        getch();
+        break;
+      }
+
+      // Reconcile the local board with the server's full move list.
+      {
+        vector<string> sm = lichess->snapshotMoves();
+        const vector<string> &local = game.getMoveHistory();
+        bool localPrefix = local.size() <= sm.size() &&
+                           equal(local.begin(), local.end(), sm.begin());
+        bool serverPrefix = sm.size() <= local.size() &&
+                            equal(sm.begin(), sm.end(), local.begin());
+        if (localPrefix) {
+          for (size_t i = local.size(); i < sm.size(); i++) {
+            game.makeMoveByUCI(sm[i]);
+          }
+          if (flipOnTurn) {
+            flipped = (game.getCurrentTurn() == BLACK);
+          }
+        } else if (serverPrefix) {
+          // Local is ahead: our own move is not echoed yet — wait for it.
+        } else {
+          // Divergence (e.g. our move was rejected): rebuild from the server.
+          game.fillBoard();
+          for (const string &m : sm) {
+            game.makeMoveByUCI(m);
+          }
+          if (flipOnTurn) {
+            flipped = (game.getCurrentTurn() == BLACK);
+          }
+        }
+      }
+
+      turn = game.getCurrentTurn();
+      long wt = 0, bt = 0, wi = 0, bi = 0;
+      lichess->clocks(wt, bt, wi, bi);
+      string clockStr = "W " + formatClock(wt) + "  B " + formatClock(bt);
+      bool isMyTurn = (turn == lichessColor);
+
+      if (!isMyTurn) {
+        status = "Waiting for opponent... (R resign) | " + clockStr;
+        drawBoard(game, cursorX, cursorY, {}, status, botInfo, turn, flipped,
+                  flipOnTurn, centerBoard, hideUI);
+        timeout(150); // poll the stream
+        int ch = getch();
+        if (ch == 'q' || ch == 'Q') {
+          break;
+        }
+        if (ch == 'i') {
+          hideUI = !hideUI;
+        } else if (ch == 'c' || ch == 'C') {
+          centerBoard = !centerBoard;
+        } else if (ch == 'f' || ch == 'F') {
+          flipOnTurn = !flipOnTurn;
+          if (flipOnTurn) {
+            flipped = (game.getCurrentTurn() == BLACK);
+          }
+        } else if (ch == 'R') {
+          lichess->resign();
+          status = "Resigning...";
+        }
+        continue;
+      } else {
+        status = "Your move (R resign) | " + clockStr;
+        // Wake periodically to refresh clocks and notice a server-side ending.
+        timeout(250);
+      }
+    }
+    // End of Lichess
+
     // Auto-play bot moves
     if (botEnabled && game.isBotTurn()) {
       status = "Bot is thinking...";
@@ -981,7 +1356,7 @@ int main(int argc, char **argv) {
         status = "Failed to save file!";
       }
     } else if (ch == 'o' || ch == 'O') {
-      if (networkEnabled) {
+      if (networkEnabled || lichessEnabled) {
         status = "Cannot load game in multiplayer!";
       } else {
         // Вычисление текущего смещения по вертикали
@@ -1012,6 +1387,9 @@ int main(int argc, char **argv) {
           status = "File not found!";
         }
       }
+    } else if (ch == 'R' && lichessEnabled) {
+      lichess->resign();
+      status = "Resigning...";
     } else if (ch == '\n' || ch == KEY_ENTER) {
       int bx = flipped ? (7 - cursorX) : cursorX;
       int by = flipped ? (7 - cursorY) : cursorY;
@@ -1024,12 +1402,19 @@ int main(int argc, char **argv) {
         }
       } else {
         if (game.moveFigure(cursor)) {
+          bool sendFailed = false;
           if (networkEnabled) {
             netAdapter.sendMove(game.getLastExecutedUCIMove());
+          }
+          if (lichessEnabled) {
+            sendFailed = !lichess->sendMove(game.getLastExecutedUCIMove());
           }
           status = game.getLastMessage();
           if (status.empty()) {
             status = "Move done";
+          }
+          if (sendFailed) {
+            status = "Lichess rejected move (will resync)";
           }
           if (flipOnTurn) {
             flipped = (game.getCurrentTurn() == BLACK);

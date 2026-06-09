@@ -169,7 +169,7 @@ void drawBoard(ChessFacade &game, int cursorX, int cursorY,
   clear();
   int rows = 0, cols = 0;
   getmaxyx(stdscr, rows, cols);
-  const int boardWidth = 27; // "8| " gutter + 8 squares * 3 columns
+  const int boardWidth = 19; // "8| " gutter + 8 squares * 2 columns
   const int boardHeight = 10;
   int offsetX =
       centerBoard ? ((cols > boardWidth) ? (cols - boardWidth) / 2 : 0) : 0;
@@ -193,12 +193,11 @@ void drawBoard(ChessFacade &game, int cursorX, int cursorY,
       game.isInCheck(BLACK) ? game.getKingSquare(BLACK) : Coordinates(-1, -1);
 
   bool classic = (gTheme == THEME_CLASSIC);
-  int cellH = classic ? 1 : 2;       // cell height in text rows
-  int boardRows = 8 * cellH;         // rows the board occupies
+  int boardRows = 8; // compact: one text row per rank, cells 2 columns wide
 
   for (int sy = 7; sy >= 0; sy--) {
     int displayRow = flipped ? (8 - sy) : (sy + 1);
-    int r0 = offsetY + (7 - sy) * cellH; // top row of this rank's cells
+    int r0 = offsetY + (7 - sy);
     mvprintw(r0, offsetX, "%d|", displayRow);
     for (int sx = 0; sx < 8; sx++) {
       int bx = flipped ? (7 - sx) : sx;
@@ -210,10 +209,10 @@ void drawBoard(ChessFacade &game, int cursorX, int cursorY,
                     (lastTo.getX() == bx && lastTo.getY() == by);
       bool isCheck = (checkW.getX() == bx && checkW.getY() == by) ||
                      (checkB.getX() == bx && checkB.getY() == by);
-      int cellCol = offsetX + 3 + sx * 3;
+      int cellCol = offsetX + 3 + sx * 2; // 2 columns per cell
 
       if (classic) {
-        // Original look: foreground colors only, no square fill, one row tall.
+        // Original look: foreground colors only, no square fill.
         string cell = piece.present ? typeToString(piece.type) : ".";
         int cp = 0;
         if (isCheck || (isValid && piece.present)) {
@@ -233,7 +232,7 @@ void drawBoard(ChessFacade &game, int cursorX, int cursorY,
         if (isCursor) {
           attron(A_REVERSE);
         }
-        mvprintw(r0, cellCol, " %s ", cell.c_str());
+        mvprintw(r0, cellCol, "%s", cell.c_str());
         if (isCursor) {
           attroff(A_REVERSE);
         }
@@ -246,9 +245,9 @@ void drawBoard(ChessFacade &game, int cursorX, int cursorY,
         continue;
       }
 
-      // Background themes (gray / wood): a filled 3x2 square per cell so the
-      // board reads as squares. Priority: cursor > check > capture-target >
-      // empty-target > last-move > checkerboard base.
+      // Background themes (gray / wood): a filled 2x1 square per cell.
+      // Priority: cursor > check > capture-target > empty-target > last-move
+      // > checkerboard base.
       SquareBg bg;
       if (isCursor) {
         bg = SQ_CURSOR;
@@ -282,22 +281,22 @@ void drawBoard(ChessFacade &game, int cursorX, int cursorY,
       if (piece.present) {
         attron(A_BOLD); // crisp glyphs against the colored squares
       }
-      mvprintw(r0, cellCol, " %s ", cell.c_str()); // glyph row, centered
+      // Two-column block (glyph + trailing space) so squares are contiguous.
+      mvprintw(r0, cellCol, "%s ", cell.c_str());
       if (piece.present) {
         attroff(A_BOLD);
       }
-      mvprintw(r0 + 1, cellCol, "   "); // lower row, same background fill
       attroff(COLOR_PAIR(pair));
     }
   }
 
   int labelRow = offsetY + boardRows;
-  // File labels, one per column, centered under each square.
+  // File labels, one per column, aligned with each square's glyph.
   mvprintw(labelRow, offsetX, "%s", getCornerIcon().c_str());
   mvprintw(labelRow, offsetX + 1, "|");
   for (int sx = 0; sx < 8; sx++) {
     char f = static_cast<char>(flipped ? ('H' - sx) : ('A' + sx));
-    mvprintw(labelRow, offsetX + 4 + sx * 3, "%c", f);
+    mvprintw(labelRow, offsetX + 3 + sx * 2, "%c", f);
   }
 
   // Captured pieces + material score, lichess-style, just below the board.
@@ -355,19 +354,19 @@ void drawBoard(ChessFacade &game, int cursorX, int cursorY,
 void computeOffsets(bool centerBoard, int &offsetX, int &offsetY) {
   int rows = 0, cols = 0;
   getmaxyx(stdscr, rows, cols);
-  const int boardWidth = 27; // "8| " gutter + 8 squares * 3 columns
+  const int boardWidth = 19; // "8| " gutter + 8 squares * 2 columns
   const int boardHeight = 10;
   offsetX = centerBoard ? ((cols > boardWidth) ? (cols - boardWidth) / 2 : 0) : 0;
   offsetY =
       centerBoard ? ((rows > boardHeight) ? (rows - boardHeight) / 2 : 0) : 0;
 }
 
-// Analysis side panel, drawn to the right of the board (column offsetX + 29).
+// Analysis side panel, drawn to the right of the board (column offsetX + 22).
 // Call after drawBoard each frame in the replay loop.
 void drawAnalysisPanel(int offsetX, int offsetY, bool active, size_t replayIndex,
                        size_t total, const GameAnalysis &analysis,
                        bool analyzing, int progDone, int progTotal) {
-  int px = offsetX + 29;
+  int px = offsetX + 22;
   int py = offsetY;
 
   if (analyzing) {

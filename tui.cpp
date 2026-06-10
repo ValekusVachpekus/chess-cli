@@ -107,6 +107,14 @@ const char *themeName(int t) {
   return "?";
 }
 
+// Raw-ANSI mirror of the colors initBoardColors() hands to ncurses, for the
+// raw board renderer (see iconStyleNeedsRawBoard below).
+struct RawPalette {
+  int whiteFg, blackFg;
+  int lightBg, darkBg, targetBg, captureBg, lastBg, cursorBg;
+};
+static RawPalette gRawPalette;
+
 // Initialise the board color pairs for `theme`. Uses a 256-color palette when
 // the terminal supports it, otherwise the basic 8 colors. (THEME_CLASSIC draws
 // with the COLOR_*_PIECE foreground pairs instead and ignores these.)
@@ -136,6 +144,8 @@ void initBoardColors(int theme) {
     lastBg = COLOR_YELLOW;
     cursorBg = COLOR_CYAN;
   }
+  gRawPalette = {whiteFg, blackFg,  lightBg, darkBg,
+                 targetBg, captureBg, lastBg, cursorBg};
   init_pair(PAIR_W_LIGHT, whiteFg, lightBg);
   init_pair(PAIR_B_LIGHT, blackFg, lightBg);
   init_pair(PAIR_W_DARK, whiteFg, darkBg);
@@ -148,6 +158,81 @@ void initBoardColors(int theme) {
   init_pair(PAIR_B_LAST, blackFg, lastBg);
   init_pair(PAIR_W_CURSOR, whiteFg, cursorBg);
   init_pair(PAIR_B_CURSOR, blackFg, cursorBg);
+}
+
+// ---- Raw ANSI board renderer -----------------------------------------------
+// Nerd/FAE/Material piece glyphs live in the Unicode Private Use Area:
+// wcwidth() reports 1, but many fonts render them 2 cells wide, so the ncurses
+// cursor model drifts and the board skews rightwards row by row. For these
+// icon styles the board cells are drawn directly with ANSI escape codes:
+// every cell AND every glyph is preceded by an absolute cursor move, so the
+// layout never depends on how wide the terminal actually rendered the previous
+// glyph. The rest of the UI stays in ncurses; drawBoard writes the raw buffer
+// right after refresh() and then parks the cursor back where ncurses left it,
+// so ncurses' cursor tracking stays correct.
+
+bool iconStyleNeedsRawBoard() {
+  return gCurrentIconStyle == ICON_NERD || gCurrentIconStyle == ICON_UNICODE ||
+         gCurrentIconStyle == ICON_FAE;
+}
+
+// Absolute cursor positioning (CUP). row/col are 0-based ncurses coordinates.
+void rawMoveTo(string &out, int row, int col) {
+  out += "\033[" + to_string(row + 1) + ";" + to_string(col + 1) + "H";
+}
+
+int rawSquareBg(SquareBg bg) {
+  switch (bg) {
+  case SQ_CURSOR:
+    return gRawPalette.cursorBg;
+  case SQ_CAPTURE:
+  case SQ_CHECK: // check reuses the red capture background
+    return gRawPalette.captureBg;
+  case SQ_TARGET:
+    return gRawPalette.targetBg;
+  case SQ_LAST:
+    return gRawPalette.lastBg;
+  case SQ_DARK:
+    return gRawPalette.darkBg;
+  case SQ_LIGHT:
+    return gRawPalette.lightBg;
+  }
+  return gRawPalette.lightBg;
+}
+
+// One 2-column board square: fill both columns with the background first, then
+// re-anchor and draw the glyph. Works whether the font renders the glyph 1 or
+// 2 cells wide — a wide glyph simply covers the second background space, and
+// nothing is ever printed after it on the same row without an absolute move.
+void rawThemedCell(string &out, int row, int col, const string &glyph, int fg,
+                   int bg, bool bold) {
+  rawMoveTo(out, row, col);
+  out += "\033[0;38;5;" + to_string(fg) + ";48;5;" + to_string(bg) + "m";
+  if (bold) {
+    out += "\033[1m";
+  }
+  out += "  ";
+  rawMoveTo(out, row, col);
+  out += glyph;
+}
+
+// Classic-theme square: no background fill, foreground attributes only.
+// fg < 0 means the terminal's default foreground.
+void rawClassicCell(string &out, int row, int col, const string &glyph, int fg,
+                    bool underline, bool reverse) {
+  rawMoveTo(out, row, col);
+  out += "\033[0m  ";
+  rawMoveTo(out, row, col);
+  if (fg >= 0) {
+    out += "\033[38;5;" + to_string(fg) + "m";
+  }
+  if (underline) {
+    out += "\033[4m";
+  }
+  if (reverse) {
+    out += "\033[7m";
+  }
+  out += glyph;
 }
 
 bool isMoveInList(const vector<Coordinates> &moves, int x, int y) {
@@ -193,6 +278,11 @@ void drawBoard(ChessFacade &game, int cursorX, int cursorY,
       game.isInCheck(BLACK) ? game.getKingSquare(BLACK) : Coordinates(-1, -1);
 
   bool classic = (gTheme == THEME_CLASSIC);
+  // PUA icon styles: board cells go into rawBuf and are emitted with absolute
+  // ANSI positioning after refresh(); the ncurses pass leaves them blank.
+  // See the raw-renderer block above isMoveInList().
+  bool rawBoard = iconStyleNeedsRawBoard();
+  string rawBuf;
   int boardRows = 8; // compact: one text row per rank, cells 2 columns wide
 
   for (int sy = 7; sy >= 0; sy--) {
@@ -222,6 +312,20 @@ void drawBoard(ChessFacade &game, int cursorX, int cursorY,
           cp = COLOR_HIGHLIGHT;
         } else if (piece.present) {
           cp = (piece.color == WHITE) ? COLOR_WHITE_PIECE : COLOR_BLACK_PIECE;
+        }
+        if (rawBoard) {
+          int fg = -1; // terminal default
+          if (cp == COLOR_WHITE_PIECE) {
+            fg = COLOR_BLUE;
+          } else if (cp == COLOR_BLACK_PIECE) {
+            fg = COLOR_YELLOW;
+          } else if (cp == COLOR_HIGHLIGHT) {
+            fg = COLOR_GREEN;
+          } else if (cp == COLOR_CAPTURE) {
+            fg = COLOR_RED;
+          }
+          rawClassicCell(rawBuf, r0, cellCol, cell, fg, isLast, isCursor);
+          continue;
         }
         if (cp != 0) {
           attron(COLOR_PAIR(cp));
@@ -276,6 +380,12 @@ void drawBoard(ChessFacade &game, int cursorX, int cursorY,
         fgSide = WHITE;
       }
 
+      if (rawBoard) {
+        int fg = (fgSide != BLACK) ? gRawPalette.whiteFg : gRawPalette.blackFg;
+        rawThemedCell(rawBuf, r0, cellCol, cell, fg, rawSquareBg(bg),
+                      piece.present);
+        continue;
+      }
       int pair = squarePair(bg, fgSide);
       attron(COLOR_PAIR(pair));
       if (piece.present) {
@@ -292,7 +402,17 @@ void drawBoard(ChessFacade &game, int cursorX, int cursorY,
 
   int labelRow = offsetY + boardRows;
   // File labels, one per column, aligned with each square's glyph.
-  mvprintw(labelRow, offsetX, "%s", getCornerIcon().c_str());
+  if (rawBoard) {
+    // The corner icon is a PUA glyph too: anchor it and the "|" absolutely.
+    // (In a double-width font the glyph's right half is clipped by the "|".)
+    rawMoveTo(rawBuf, labelRow, offsetX);
+    rawBuf += "\033[0m";
+    rawBuf += getCornerIcon();
+    rawMoveTo(rawBuf, labelRow, offsetX + 1);
+    rawBuf += "|";
+  } else {
+    mvprintw(labelRow, offsetX, "%s", getCornerIcon().c_str());
+  }
   mvprintw(labelRow, offsetX + 1, "|");
   for (int sx = 0; sx < 8; sx++) {
     char f = static_cast<char>(flipped ? ('H' - sx) : ('A' + sx));
@@ -320,9 +440,15 @@ void drawBoard(ChessFacade &game, int cursorX, int cursorY,
       mvprintw(rowAbs, offsetX, "%s", label);
       int col = offsetX + 7; // both labels ("White: "/"Black: ") are 7 chars
       for (size_t i = 0; i < taken.size(); i++) {
-        attron(COLOR_PAIR(piecePair));
-        mvprintw(rowAbs, col, "%s", typeToString(taken[i].type).c_str());
-        attroff(COLOR_PAIR(piecePair));
+        if (rawBoard) {
+          int fg = (piecePair == COLOR_WHITE_PIECE) ? COLOR_BLUE : COLOR_YELLOW;
+          rawClassicCell(rawBuf, rowAbs, col, typeToString(taken[i].type), fg,
+                         false, false);
+        } else {
+          attron(COLOR_PAIR(piecePair));
+          mvprintw(rowAbs, col, "%s", typeToString(taken[i].type).c_str());
+          attroff(COLOR_PAIR(piecePair));
+        }
         col += 2;
       }
       if (plus > 0) {
@@ -346,7 +472,22 @@ void drawBoard(ChessFacade &game, int cursorX, int cursorY,
              "Controls: arrows/jkl, Enter select/deselect, Esc deselect, f "
              "flip, t theme, C center, i hide UI, s save, o load, q quit");
   }
-  refresh();
+  if (rawBoard && !rawBuf.empty()) {
+    // Emit the raw cells right after ncurses flushes its frame, then park the
+    // terminal cursor back where refresh() left it (the stdscr cursor), so
+    // ncurses' relative cursor-movement optimisations stay in sync with the
+    // real terminal. Subsequent refresh() calls with an untouched stdscr are
+    // no-ops, so the raw board survives until the next full redraw.
+    int cy = 0, cx = 0;
+    getyx(stdscr, cy, cx);
+    refresh();
+    rawBuf += "\033[0m";
+    rawMoveTo(rawBuf, cy, cx);
+    fputs(rawBuf.c_str(), stdout);
+    fflush(stdout);
+  } else {
+    refresh();
+  }
 }
 
 // Board offsets, computed the same way drawBoard does, so the analysis panel
